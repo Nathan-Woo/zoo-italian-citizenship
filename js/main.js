@@ -52,23 +52,59 @@ watchAuthUser(async (user) => {
 
   if (!user) { render(); return; }
 
-  const [sp, mp] = await Promise.all([
-    getProfileOnce(studentProfileId(user.uid)),
-    getProfileOnce(masterProfileId(user.uid)),
-  ]);
-  studentProfile = sp;
-  masterProfile = mp;
-
-  const remembered = localStorage.getItem(lastRoleKey(user.uid));
-  if (remembered === "student" && studentProfile) activeRole = "student";
-  else if (remembered === "master" && masterProfile) activeRole = "master";
-  else if (studentProfile) activeRole = "student";
-  else if (masterProfile) activeRole = "master";
-  // else: neither profile exists yet — role choice screen will show.
-
-  activeTab = "dashboard";
-  render();
+  await loadProfilesFor(user);
 });
+
+async function loadProfilesFor(user) {
+  renderConnecting();
+  try {
+    const [sp, mp] = await Promise.all([
+      getProfileOnce(studentProfileId(user.uid)),
+      getProfileOnce(masterProfileId(user.uid)),
+    ]);
+    studentProfile = sp;
+    masterProfile = mp;
+
+    const remembered = localStorage.getItem(lastRoleKey(user.uid));
+    if (remembered === "student" && studentProfile) activeRole = "student";
+    else if (remembered === "master" && masterProfile) activeRole = "master";
+    else if (studentProfile) activeRole = "student";
+    else if (masterProfile) activeRole = "master";
+    // else: neither profile exists yet — role choice screen will show.
+
+    activeTab = "dashboard";
+    render();
+  } catch (err) {
+    renderConnectionError(err, () => loadProfilesFor(user));
+  }
+}
+
+function renderConnecting() {
+  mount(app, el("div", { class: "auth-screen" }, [
+    el("div", { class: "auth-screen__art" }),
+    el("div", { class: "auth-card" }, [
+      el("span", { class: "auth-eyebrow" }, "MOD. IT-CIT · CONNESSIONE"),
+      el("h1", { class: "auth-title" }, "One moment…"),
+      el("p", { class: "auth-sub" }, "Connecting to Firestore."),
+    ]),
+  ]));
+}
+
+function renderConnectionError(err, onRetry) {
+  mount(app, el("div", { class: "auth-screen" }, [
+    el("div", { class: "auth-screen__art" }),
+    el("div", { class: "auth-card" }, [
+      el("span", { class: "auth-eyebrow" }, "MOD. IT-CIT · ERRORE"),
+      el("h1", { class: "auth-title" }, "Couldn't reach the database"),
+      el("p", { class: "auth-sub" }, "You're signed in, but the app can't connect to Firestore right now. This is almost always a browser extension (ad blocker/privacy tool) or network filter blocking requests to firestore.googleapis.com — try an incognito window or a different network, then retry."),
+      el("p", { class: "muted small" }, err?.message || String(err)),
+      el("div", { class: "row-actions" }, [
+        el("button", { class: "btn btn--primary", onclick: onRetry }, "Try again"),
+        el("button", { class: "btn btn--ghost", onclick: logOut }, "Log out"),
+      ]),
+    ]),
+  ]));
+}
 
 function render() {
   if (!authUser) { renderSignIn(app); return; }
