@@ -1,0 +1,588 @@
+/* ─────────────────────────────────────────────────────────────────────
+   ZOO'S ITALIAN CITIZENSHIP — visual identity
+   Palette pulled from the Italian passport itself: bordeaux cover, gold
+   foil emblem, cream interior pages, ink stamps. Signature element is
+   the rubber "APPROVATO / DA RIVEDERE" stamp used throughout grading.
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ink: #221A14;
+  --passport: #5B1A2B;
+  --passport-dark: #3E1220;
+  --passport-tint: #F1E1E4;
+  --gold: #C9A227;
+  --gold-light: #E4C767;
+  --paper: #F6F1E4;
+  --paper-alt: #EFE6D0;
+  --paper-line: #E3D8BC;
+  --muted: #8A7355;
+  --success: #2F6F4E;
+  --success-tint: #E1EEE6;
+  --danger: #A22C2C;
+  --danger-tint: #F3E1DE;
+  --radius: 10px;
+  --shadow: 0 2px 10px rgba(34, 26, 20, 0.08), 0 1px 2px rgba(34, 26, 20, 0.06);
+  --shadow-lg: 0 12px 32px rgba(34, 26, 20, 0.16);
+  font-family: 'Source Sans 3', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(34,26,20,0.05) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Fraunces', Georgia, serif;
+  margin: 0;
+  color: var(--passport-dark);
+}
+
+p { margin: 0.35em 0; }
+.muted { color: var(--muted); }
+.small { font-size: 0.82rem; }
+.hidden { display: none !important; }
+
+button, input, select {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+
+.btn {
+  border: 1.5px solid var(--passport);
+  background: var(--paper);
+  color: var(--passport-dark);
+  padding: 10px 18px;
+  border-radius: 7px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.15s ease;
+}
+.btn:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.btn--primary {
+  background: var(--passport);
+  color: var(--paper);
+  border-color: var(--passport-dark);
+}
+.btn--primary:hover { background: var(--passport-dark); }
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--paper-line);
+  color: var(--ink);
+}
+.btn--ghost:hover { border-color: var(--passport); }
+
+.btn--danger { color: var(--danger); border-color: var(--danger-tint); }
+.btn--danger:hover { border-color: var(--danger); }
+
+.btn--sm { padding: 6px 12px; font-size: 0.85rem; }
+.btn--block { width: 100%; }
+
+.btn--rec {
+  background: var(--paper-alt);
+  border-color: var(--gold);
+}
+.btn--rec-active {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(162,44,44,0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(162,44,44,0); }
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--passport);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+/* ── Auth screen ─────────────────────────────────────────────────── */
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 460px);
+}
+
+.auth-screen__art {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(201,162,39,0.25), transparent 55%),
+    linear-gradient(160deg, var(--passport) 0%, var(--passport-dark) 100%);
+  position: relative;
+  display: none;
+}
+.auth-screen__art::after {
+  content: "IT";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-size: 22vw;
+  font-weight: 700;
+  color: rgba(228, 199, 103, 0.14);
+  letter-spacing: -0.04em;
+}
+@media (min-width: 860px) {
+  .auth-screen__art { display: block; }
+}
+
+.auth-card {
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+  max-width: 460px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.auth-eyebrow {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+  font-weight: 700;
+}
+.auth-title { font-size: 2rem; margin-bottom: 2px; }
+.auth-sub { color: var(--muted); margin-bottom: 12px; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--passport-dark);
+}
+.field input, .field select {
+  font-weight: 400;
+  padding: 10px 12px;
+  border: 1.5px solid var(--paper-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+}
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201,162,39,0.18);
+}
+
+.role-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.role-pick__option {
+  border: 1.5px solid var(--paper-line);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+  font-weight: 400;
+  background: #fff;
+}
+.role-pick__option:has(input:checked) {
+  border-color: var(--passport);
+  background: var(--passport-tint);
+}
+.role-pick__option small { display: block; color: var(--muted); font-weight: 400; }
+.role-pick__option input { margin-top: 3px; }
+
+/* ── App shell / nav ─────────────────────────────────────────────── */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-nav {
+  background: var(--passport);
+  color: var(--paper);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 20px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  box-shadow: var(--shadow);
+  border-bottom: 3px solid var(--gold);
+}
+
+.app-nav__brand { display: flex; align-items: center; gap: 10px; }
+.app-nav__emblem { font-size: 1.4rem; }
+.app-nav__title {
+  display: block;
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  font-size: 1.02rem;
+  line-height: 1.1;
+}
+.app-nav__role {
+  display: block;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--gold-light);
+  letter-spacing: 0.08em;
+}
+
+.app-nav__tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  flex: 1;
+}
+.app-nav__tab {
+  background: transparent;
+  border: none;
+  color: rgba(246,241,228,0.75);
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.app-nav__tab:hover { color: #fff; background: rgba(246,241,228,0.08); }
+.app-nav__tab--active {
+  background: var(--gold);
+  color: var(--passport-dark);
+}
+.app-nav__logout {
+  color: var(--paper);
+  border-color: rgba(246,241,228,0.4);
+}
+
+.app-main {
+  flex: 1;
+  padding: 24px 20px 60px;
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.view { display: flex; flex-direction: column; gap: 18px; }
+.view-title { font-size: 1.5rem; }
+.section-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+/* ── Panels & cards ──────────────────────────────────────────────── */
+
+.panel {
+  background: #fff;
+  border: 1px solid var(--paper-line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+.panel--nested { background: var(--paper); box-shadow: none; margin-top: 10px; }
+.panel__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+.editor-card {
+  background: #fff;
+  border: 1.5px dashed var(--gold);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.builder-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .builder-grid { grid-template-columns: 1fr; }
+}
+
+.list { display: flex; flex-direction: column; gap: 8px; }
+.list-row {
+  background: #fff;
+  border: 1px solid var(--paper-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  border: 1.5px dashed var(--paper-line);
+  border-radius: var(--radius);
+}
+
+/* ── Tabs / chips ────────────────────────────────────────────────── */
+
+.tabbar { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.tabbar--sm .tab { padding: 4px 10px; font-size: 0.82rem; }
+.tab {
+  background: var(--paper-alt);
+  border: 1px solid var(--paper-line);
+  border-radius: 20px;
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--passport-dark);
+}
+.tab--active { background: var(--passport); color: var(--paper); border-color: var(--passport-dark); }
+
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  background: var(--paper-alt);
+  border: 1px solid var(--paper-line);
+  border-radius: 20px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.chip--active { background: var(--gold); border-color: var(--gold); color: var(--passport-dark); }
+.chip--static { cursor: default; background: var(--passport-tint); color: var(--passport-dark); font-size: 0.72rem; padding: 3px 9px; }
+
+/* ── Hero strip / points ─────────────────────────────────────────── */
+
+.hero-strip {
+  background: linear-gradient(135deg, var(--passport), var(--passport-dark));
+  color: var(--paper);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-lg);
+  border: 2px solid var(--gold);
+}
+.hero-strip__eyebrow {
+  display: block;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  color: var(--gold-light);
+}
+.hero-strip__number { display: block; font-family: 'Fraunces', serif; font-size: 3rem; font-weight: 700; }
+.hero-strip__number--sm { font-size: 1.4rem; color: var(--passport-dark); }
+.passport-emblem {
+  width: 64px; height: 64px;
+  border: 3px solid var(--gold);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  font-size: 1.3rem;
+  color: var(--gold-light);
+}
+
+.cap-banner { display: flex; flex-direction: column; gap: 8px; font-weight: 600; color: var(--passport-dark); }
+.cap-bar { height: 8px; background: var(--paper-alt); border-radius: 6px; overflow: hidden; }
+.cap-bar__fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold-light)); }
+
+.chart-wrap { height: 220px; margin-top: 10px; }
+.chart-canvas { width: 100% !important; height: 100% !important; }
+
+/* ── Rewards ─────────────────────────────────────────────────────── */
+
+.reward-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.reward {
+  border: 1px solid var(--paper-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.reward--unlocked { border-color: var(--gold); background: #FFFBEF; }
+.reward__top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+
+/* ── Stamp badge (signature element) ────────────────────────────── */
+
+.stamp {
+  display: inline-block;
+  font-family: 'Space Mono', monospace;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  padding: 5px 11px;
+  border: 2.5px solid currentColor;
+  border-radius: 5px;
+  transform: rotate(-6deg);
+  text-transform: uppercase;
+}
+.stamp--sm { font-size: 0.62rem; padding: 3px 8px; }
+.stamp--ok { color: var(--success); background: var(--success-tint); }
+.stamp--no { color: var(--danger); background: var(--danger-tint); }
+
+/* ── Flashcards ──────────────────────────────────────────────────── */
+
+.flash-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+
+.flashcard {
+  width: 100%;
+  max-width: 420px;
+  height: 240px;
+  perspective: 1200px;
+  cursor: pointer;
+  position: relative;
+}
+.flashcard::before {
+  content: "";
+  position: absolute;
+  top: -10px; left: 12px; right: 12px;
+  height: 10px;
+  background-image: radial-gradient(circle, var(--paper) 3px, transparent 3.5px);
+  background-size: 14px 14px;
+  background-position: 0 0;
+  opacity: 0.9;
+  z-index: 2;
+}
+.flashcard__face {
+  position: absolute; inset: 0;
+  backface-visibility: hidden;
+  border-radius: 12px;
+  border: 1.5px solid var(--paper-line);
+  background: #fff;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  box-shadow: var(--shadow-lg);
+  transition: transform 0.5s cubic-bezier(0.4, 0.2, 0.2, 1);
+  transform: rotateY(0deg);
+}
+.flashcard__face--back {
+  transform: rotateY(180deg);
+  background: var(--passport-tint);
+}
+.flashcard--flipped .flashcard__face--front { transform: rotateY(-180deg); }
+.flashcard--flipped .flashcard__face--back { transform: rotateY(0deg); }
+
+.flashcard__eyebrow {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+}
+.flashcard__word { font-family: 'Fraunces', serif; font-size: 1.9rem; font-weight: 600; text-align: center; color: var(--passport-dark); }
+.flashcard__hint { color: var(--muted); font-style: italic; text-align: center; }
+
+.flash-nav { display: flex; align-items: center; gap: 16px; }
+.flash-nav__count { font-family: 'Space Mono', monospace; color: var(--muted); }
+
+/* ── Quiz items ──────────────────────────────────────────────────── */
+
+.quiz-item {
+  border: 1px solid var(--paper-line);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.quiz-item:last-child { margin-bottom: 0; }
+.quiz-item--ok { border-color: var(--success); background: var(--success-tint); }
+.quiz-item--no { border-color: var(--danger); background: var(--danger-tint); }
+.quiz-item__eyebrow {
+  display: block;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.quiz-item__prompt-text { font-size: 1.15rem; }
+.quiz-item input[type="text"] {
+  padding: 10px 12px;
+  border: 1.5px solid var(--paper-line);
+  border-radius: 7px;
+}
+.quiz-item__answer { display: flex; flex-direction: column; gap: 2px; font-size: 0.9rem; }
+
+.grade-row {
+  border-top: 1px dashed var(--paper-line);
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.grade-row__answer { display: flex; flex-direction: column; gap: 2px; }
+.grade-toggle { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+
+.results-summary {
+  font-family: 'Fraunces', serif;
+  font-size: 1.2rem;
+  color: var(--passport-dark);
+}
+
+/* ── Recorder widget ─────────────────────────────────────────────── */
+
+.rec-widget { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rec-widget__status { font-size: 0.85rem; color: var(--muted); }
+.rec-widget__player { height: 34px; }
+
+/* ── Toasts ──────────────────────────────────────────────────────── */
+
+.toast-host {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.toast {
+  background: var(--ink);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  box-shadow: var(--shadow-lg);
+}
+.toast--show { opacity: 1; transform: translateY(0); }
+.toast--success { background: var(--success); }
+.toast--error { background: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

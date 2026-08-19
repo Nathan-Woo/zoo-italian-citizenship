@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isMaster() {
+      return isSignedIn() && myProfile().role == 'master';
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Allowlist gate — readable by anyone (even signed-out, for signup checks),
+    // but only writable by a signed-in master. Add new emails from the
+    // Firebase console, or once you're a master, from the app's Settings tab.
+    match /allowedEmails/{email} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isMaster();
+    }
+
+    // User profiles: a user can create/read/update their own; masters can
+    // read everyone (for the student roster + grading views).
+    match /users/{uid} {
+      allow create: if isOwner(uid);
+      allow read: if isOwner(uid) || isMaster();
+      allow update: if isOwner(uid) || isMaster();
+      allow delete: if false;
+
+      match /pointsLog/{entryId} {
+        allow read: if isOwner(uid) || isMaster();
+        // Masters write quiz-grading entries; students write their own
+        // self-study entries (capped app-side by awardSelfStudyPoints()).
+        allow create: if isMaster() || isOwner(uid);
+        allow update, delete: if false;
+      }
+
+      match /selfStudyLog/{dateKey} {
+        allow read: if isOwner(uid) || isMaster();
+        allow write: if isOwner(uid);
+      }
+    }
+
+    // Content library — students can read (for practice/quizzes), only
+    // masters can write.
+    match /content/{contentId} {
+      allow read: if isSignedIn();
+      allow write: if isMaster();
+    }
+
+    // Quizzes — students can read quizzes assigned to them or 'all';
+    // only masters create/delete quizzes.
+    match /quizzes/{quizId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isMaster();
+      allow update: if isMaster();
+
+      match /submissions/{studentUid} {
+        allow read: if isOwner(studentUid) || isMaster();
+        allow create: if isOwner(studentUid);
+        // Students can't edit after submitting; only a master can grade.
+        allow update: if isMaster();
+        allow delete: if false;
+      }
+    }
+
+    // Rewards — students read, masters manage.
+    match /rewards/{rewardId} {
+      allow read: if isSignedIn();
+      allow write: if isMaster();
+    }
+
+    // App-wide settings (self-study point rules).
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isMaster();
+    }
+  }
+}
