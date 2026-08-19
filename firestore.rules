@@ -5,65 +5,70 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    function myProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function ownsProfile(profileId) {
+      return isSignedIn() &&
+        (profileId == request.auth.uid + '_student' || profileId == request.auth.uid + '_master');
     }
     function isMaster() {
-      return isSignedIn() && myProfile().role == 'master';
-    }
-    function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid + '_master'));
     }
 
-    // Allowlist gate — readable by anyone (even signed-out, for signup checks),
-    // but only writable by a signed-in master. Add new emails from the
-    // Firebase console, or once you're a master, from the app's Settings tab.
+    // Allowlist gate. Checked AFTER Google sign-in (the app never reads
+    // this while signed out), so a plain isSignedIn() read is enough —
+    // this avoids the unauthenticated-read edge cases that can surface
+    // as a generic "client is offline" error in the Firestore SDK.
     match /allowedEmails/{email} {
-      allow get: if true;
+      allow get: if isSignedIn();
       allow list: if false;
       allow write: if isMaster();
     }
 
-    // User profiles: a user can create/read/update their own; masters can
-    // read everyone (for the student roster + grading views).
-    match /users/{uid} {
-      allow create: if isOwner(uid);
-      allow read: if isOwner(uid) || isMaster();
-      allow update: if isOwner(uid) || isMaster();
+    // One Google account (uid) can own up to two profiles:
+    // {uid}_student and {uid}_master — kept as fully separate "account
+    // files" so the same person can switch roles to test the app.
+    match /profiles/{profileId} {
+      allow get: if ownsProfile(profileId) || isMaster();
+      // isMaster() lists are used for: looking a student up by email to
+      // add to a roster, and reading roster members' profile docs.
+      allow list: if isMaster();
+      allow create: if ownsProfile(profileId);
+      // A master needs to update a managed student's totalPoints when
+      // grading a quiz, and their own managedStudentIds when editing
+      // their roster — so isMaster() gets general update rights here.
+      allow update: if ownsProfile(profileId) || isMaster();
       allow delete: if false;
 
       match /pointsLog/{entryId} {
-        allow read: if isOwner(uid) || isMaster();
-        // Masters write quiz-grading entries; students write their own
-        // self-study entries (capped app-side by awardSelfStudyPoints()).
-        allow create: if isMaster() || isOwner(uid);
+        allow read: if ownsProfile(profileId) || isMaster();
+        allow create: if ownsProfile(profileId) || isMaster();
         allow update, delete: if false;
       }
 
       match /selfStudyLog/{dateKey} {
-        allow read: if isOwner(uid) || isMaster();
-        allow write: if isOwner(uid);
+        allow read: if ownsProfile(profileId) || isMaster();
+        allow write: if ownsProfile(profileId);
       }
     }
 
-    // Content library — students can read (for practice/quizzes), only
-    // masters can write.
+    // Content library — any signed-in profile can read (for practice/
+    // quizzes), only a master can write.
     match /content/{contentId} {
       allow read: if isSignedIn();
       allow write: if isMaster();
     }
 
-    // Quizzes — students can read quizzes assigned to them or 'all';
-    // only masters create/delete quizzes.
+    // Quizzes — any signed-in profile can read (students query by
+    // assignedTo array-contains their own profileId); only a master
+    // creates/edits/deletes.
     match /quizzes/{quizId} {
       allow read: if isSignedIn();
-      allow create, delete: if isMaster();
-      allow update: if isMaster();
+      allow create, update, delete: if isMaster();
 
-      match /submissions/{studentUid} {
-        allow read: if isOwner(studentUid) || isMaster();
-        allow create: if isOwner(studentUid);
-        // Students can't edit after submitting; only a master can grade.
+      match /submissions/{studentProfileId} {
+        allow read: if ownsProfile(studentProfileId) || isMaster();
+        allow create: if ownsProfile(studentProfileId);
+        // Students can't edit after submitting; only a master grades.
         allow update: if isMaster();
         allow delete: if false;
       }

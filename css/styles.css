@@ -194,6 +194,7 @@ button, input, select {
 }
 
 .role-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.role-pick--stacked { grid-template-columns: 1fr; margin-top: 8px; }
 .role-pick__option {
   border: 1.5px solid var(--paper-line);
   border-radius: 8px;
@@ -211,6 +212,60 @@ button, input, select {
 }
 .role-pick__option small { display: block; color: var(--muted); font-weight: 400; }
 .role-pick__option input { margin-top: 3px; }
+
+.role-pick__option--btn {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+}
+.role-pick__option--btn:hover:not(:disabled) {
+  border-color: var(--passport);
+  background: var(--passport-tint);
+}
+.role-pick__option--btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.btn--google__icon {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--passport-dark);
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem;
+}
+
+/* Role switcher pill in the nav bar */
+.role-switch {
+  display: flex;
+  border: 1.5px solid rgba(246,241,228,0.4);
+  border-radius: 20px;
+  padding: 2px;
+  gap: 2px;
+}
+.role-switch__pill {
+  background: transparent;
+  border: none;
+  color: rgba(246,241,228,0.8);
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.role-switch__pill--active {
+  background: var(--gold);
+  color: var(--passport-dark);
+}
 
 /* ── App shell / nav ─────────────────────────────────────────────── */
 

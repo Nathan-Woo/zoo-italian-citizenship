@@ -76,7 +76,7 @@ export function renderFlashcards(container) {
 
 /* ── Self-study mini-quiz ─────────────────────────────────────────── */
 
-export function renderSelfStudy(container, uid) {
+export function renderSelfStudy(container, profileId) {
   let allContent = [];
   let selectedTypes = new Set(TYPES);
   let count = 10;
@@ -86,7 +86,7 @@ export function renderSelfStudy(container, uid) {
 
   async function init() {
     settings = await getSelfStudySettings();
-    earnedToday = await getTodaysSelfStudyEarned(uid);
+    earnedToday = await getTodaysSelfStudyEarned(profileId);
     listenContent((list) => { allContent = list; drawSetup(); });
   }
 
@@ -189,7 +189,7 @@ export function renderSelfStudy(container, uid) {
     });
 
     const rawPoints = correctCount * (settings.pointsPerCorrect || 1);
-    const awarded = await awardSelfStudyPoints(uid, rawPoints);
+    const awarded = await awardSelfStudyPoints(profileId, rawPoints);
     earnedToday += awarded;
 
     mount(container, el("div", { class: "view" }, [

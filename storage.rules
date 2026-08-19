@@ -6,11 +6,9 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Master-recorded vocab/quiz-prompt audio: any signed-in user can
-    // listen (students need to hear it), only signed-in users can upload
-    // (the app only exposes recording UI to masters, but we keep the rule
-    // simple since role-checking against Firestore from Storage rules
-    // requires a get() call — shown below for the stricter version).
+    // Master-recorded vocab/quiz-prompt audio: any signed-in profile can
+    // listen, any signed-in profile can upload (the app only shows the
+    // recording UI to masters, but keeping the rule simple here).
     match /audio/content/{fileName} {
       allow read: if isSignedIn();
       allow write: if isSignedIn();
@@ -21,12 +19,12 @@ service firebase.storage {
       allow write: if isSignedIn();
     }
 
-    // Student quiz-response recordings: the student can upload their own,
-    // and anyone signed in can read (master needs to grade; keeping read
-    // open to isSignedIn keeps this simple for a 2-person app).
-    match /quizzes/{quizId}/submissions/{studentUid}/{fileName} {
+    // Student quiz-response recordings, stored under the student's
+    // profileId (e.g. "abc123_student"), not their raw uid.
+    match /quizzes/{quizId}/submissions/{studentProfileId}/{fileName} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == studentUid;
+      allow write: if isSignedIn() &&
+        studentProfileId == (request.auth.uid + '_student');
     }
   }
 }

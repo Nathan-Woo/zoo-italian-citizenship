@@ -1,10 +1,10 @@
 import { el, mount, toast, fmtDate, stampBadge, typeLabel } from "../dom.js";
 import {
-  listenQuizzes,
+  listenQuizzesForStudent,
   listenSubmission,
   submitQuizAnswers,
   listenPointsLog,
-  listenUserDoc,
+  listenProfile,
   listenRewards,
 } from "../db.js";
 import { renderPointsChart } from "../charts.js";
@@ -13,14 +13,14 @@ import { uploadAudioBlob } from "../audio.js";
 
 /* ── Dashboard ────────────────────────────────────────────────────── */
 
-export function renderStudentDashboard(container, uid) {
+export function renderStudentDashboard(container, profileId) {
   let range = "week";
   let pointsLog = [];
   let profile = null;
   let rewards = [];
 
-  listenPointsLog(uid, (log) => { pointsLog = log; draw(); });
-  listenUserDoc(uid, (p) => { profile = p; draw(); });
+  listenPointsLog(profileId, (log) => { pointsLog = log; draw(); });
+  listenProfile(profileId, (p) => { profile = p; draw(); });
   listenRewards((r) => { rewards = r; draw(); });
 
   function draw() {
@@ -74,17 +74,17 @@ export function renderStudentDashboard(container, uid) {
 
 /* ── Quiz list ────────────────────────────────────────────────────── */
 
-export function renderStudentQuizzes(container, uid, openQuizRunner) {
+export function renderStudentQuizzes(container, profileId, openQuizRunner) {
   let quizzes = [];
   let submissionCache = new Map();
   let unsubs = [];
 
-  listenQuizzes((list) => {
-    quizzes = list.filter((q) => q.assignedTo === uid || q.assignedTo === "all");
+  listenQuizzesForStudent(profileId, (list) => {
+    quizzes = list;
     unsubs.forEach((u) => u());
     unsubs = [];
     quizzes.forEach((q) => {
-      unsubs.push(listenSubmission(q.id, uid, (sub) => {
+      unsubs.push(listenSubmission(q.id, profileId, (sub) => {
         submissionCache.set(q.id, sub);
         draw();
       }));
@@ -131,7 +131,7 @@ export function renderStudentQuizzes(container, uid, openQuizRunner) {
 
 /* ── Quiz runner (taking a quiz) ──────────────────────────────────── */
 
-export function renderQuizRunner(container, uid, quiz, onDone) {
+export function renderQuizRunner(container, profileId, quiz, onDone) {
   const answers = quiz.items.map(() => ({ responseText: "", blob: null }));
   const recorders = [];
 
@@ -179,14 +179,14 @@ export function renderQuizRunner(container, uid, quiz, onDone) {
         const a = answers[i];
         if (item.responseMode === "audio") {
           if (!a.blob) throw new Error(`Please record an answer for item ${i + 1}.`);
-          const path = `quizzes/${quiz.id}/submissions/${uid}/${i}.webm`;
+          const path = `quizzes/${quiz.id}/submissions/${profileId}/${i}.webm`;
           const url = await uploadAudioBlob(a.blob, path);
           finalAnswers.push({ itemIndex: i, responseAudioURL: url, responseAudioPath: path });
         } else {
           finalAnswers.push({ itemIndex: i, responseText: a.responseText });
         }
       }
-      await submitQuizAnswers(quiz.id, uid, finalAnswers);
+      await submitQuizAnswers(quiz.id, profileId, finalAnswers);
       toast("Quiz submitted!", "success");
       onDone();
     } catch (err) {

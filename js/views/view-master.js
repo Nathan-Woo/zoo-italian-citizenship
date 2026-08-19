@@ -3,22 +3,74 @@ import {
   listenContent, addContent, updateContent, deleteContent,
   listenQuizzes, createQuiz, deleteQuiz,
   listenAllSubmissionsForQuiz, gradeSubmission,
-  listenAllStudents, listenPointsLog,
-  listenRewards, addReward, updateReward, deleteReward,
+  listenRoster, addStudentToRosterByEmail, removeStudentFromRoster,
+  listenRewards, addReward, deleteReward,
   getSelfStudySettings, updateSelfStudySettings,
 } from "../db.js";
 import { createRecorderWidget, playButton } from "./audio-widget.js";
 import { uploadAudioBlob, deleteAudio } from "../audio.js";
-import { renderPointsChart } from "../charts.js";
 
 const TYPES = ["vocab", "phrase", "sentence", "conjugation"];
 
+/* ── Roster / master dashboard ────────────────────────────────────── */
+
+export function renderMasterDashboard(container, { masterProfileId, hasOwnStudentProfile, onAddSelfAsStudent }) {
+  let roster = [];
+  listenRoster(masterProfileId, (r) => { roster = r; draw(); });
+
+  function draw() {
+    const emailInput = el("input", { type: "email", placeholder: "student@email.com", required: true });
+    const addForm = el("form", { class: "row-actions", onsubmit: handleAdd }, [
+      emailInput,
+      el("button", { class: "btn btn--primary btn--sm", type: "submit" }, "Add to roster"),
+    ]);
+
+    async function handleAdd(e) {
+      e.preventDefault();
+      const result = await addStudentToRosterByEmail(masterProfileId, emailInput.value);
+      if (result === "added") toast("Added to your roster.", "success");
+      else if (result === "already-in-roster") toast("Already on your roster.", "info");
+      else toast("No student account found with that email yet — they need to sign in and choose Studente first.", "error");
+      emailInput.value = "";
+    }
+
+    mount(container, el("div", { class: "view" }, [
+      el("div", { class: "panel__head" }, [
+        el("h2", { class: "view-title" }, "Your Roster"),
+      ]),
+      el("div", { class: "panel" }, [
+        el("h3", {}, "Add a student"),
+        addForm,
+        !hasOwnStudentProfile
+          ? el("button", {
+              class: "btn btn--ghost btn--sm",
+              type: "button",
+              onclick: async () => { await onAddSelfAsStudent(); toast("Your own student profile is set up and added.", "success"); },
+            }, "+ Add my own account as a student (for testing)")
+          : el("p", { class: "muted small" }, "Your own student profile is already on your roster if you added it."),
+      ]),
+      el("div", { class: "list" }, roster.length
+        ? roster.map((s) => el("div", { class: "list-row" }, [
+            el("div", {}, [
+              el("strong", {}, s.displayName || s.email),
+              el("p", { class: "muted" }, s.email),
+            ]),
+            el("div", { class: "row-actions" }, [
+              el("span", { class: "hero-strip__number hero-strip__number--sm" }, String(s.totalPoints || 0)),
+              el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: async () => { await removeStudentFromRoster(masterProfileId, s.id); toast("Removed from roster.", "info"); } }, "Remove"),
+            ]),
+          ]))
+        : [el("p", { class: "muted" }, "No students on your roster yet — add one above.")]),
+    ]));
+  }
+}
+
 /* ── Content Library ──────────────────────────────────────────────── */
 
-export function renderContentLibrary(container, uid) {
+export function renderContentLibrary(container, masterProfileId) {
   let items = [];
   let filterType = "all";
-  let editing = null; // content item being edited, or {} for new
+  let editing = null;
   let removeAudioFlag = false;
 
   listenContent((list) => { items = list; draw(); });
@@ -119,7 +171,7 @@ export function renderContentLibrary(container, uid) {
         english: fd.get("english").trim(),
         hint: fd.get("hint").trim() || null,
         tags: fd.get("tags").trim() || null,
-        createdBy: uid,
+        createdBy: masterProfileId,
       };
       try {
         let id = editing.id;
@@ -153,28 +205,33 @@ export function renderContentLibrary(container, uid) {
 
 /* ── Quiz Builder ─────────────────────────────────────────────────── */
 
-export function renderQuizBuilder(container, uid) {
-  let quizzes = [];
-  let students = [];
+export function renderQuizBuilder(container, masterProfileId) {
+  let rawQuizzes = [];
+  let roster = [];
   let content = [];
   let building = false;
   let draftItems = [];
+  let selectedStudentIds = new Set();
 
-  listenQuizzes((q) => { quizzes = q; draw(); });
-  listenAllStudents((s) => { students = s; draw(); });
+  listenQuizzes((q) => { rawQuizzes = q; draw(); });
+  listenRoster(masterProfileId, (r) => { roster = r; draw(); });
   listenContent((c) => { content = c; draw(); });
 
   function draw() {
+    // Only show quizzes this master created (own roster's quizzes),
+    // recomputed here (not inside the listeners) since roster and quiz
+    // data arrive from two independent listeners.
+    const quizzes = rawQuizzes.filter((quiz) => quiz.createdBy === masterProfileId);
     mount(container, el("div", { class: "view" }, [
       el("div", { class: "panel__head" }, [
         el("h2", { class: "view-title" }, "Quizzes"),
-        el("button", { class: "btn btn--primary btn--sm", onclick: () => { building = true; draftItems = []; draw(); } }, "+ New quiz"),
+        el("button", { class: "btn btn--primary btn--sm", onclick: () => { building = true; draftItems = []; selectedStudentIds = new Set(roster.map((s) => s.id)); draw(); } }, "+ New quiz"),
       ]),
       building ? renderBuilder() : null,
       el("div", { class: "list" }, quizzes.length ? quizzes.map((q) => el("div", { class: "list-row" }, [
         el("div", {}, [
           el("strong", {}, q.title),
-          el("p", { class: "muted" }, `Assigned to ${q.assignedTo === "all" ? "all students" : (students.find((s) => s.id === q.assignedTo)?.displayName || "a student")} · ${q.items.length} items · ${fmtDate(q.createdAt)}`),
+          el("p", { class: "muted" }, `Assigned to ${(q.assignedTo || []).map((id) => roster.find((s) => s.id === id)?.displayName || "a student").join(", ") || "no one yet"} · ${q.items.length} items · ${fmtDate(q.createdAt)}`),
         ]),
         el("div", { class: "row-actions" }, [
           el("button", { class: "btn btn--ghost btn--sm", onclick: () => renderGradingFor(q) }, "Grade"),
@@ -186,6 +243,13 @@ export function renderQuizBuilder(container, uid) {
   }
 
   function renderBuilder() {
+    if (!roster.length) {
+      return el("div", { class: "editor-card" }, [
+        el("p", { class: "muted" }, "Add at least one student to your roster before building a quiz."),
+        el("button", { class: "btn btn--ghost", type: "button", onclick: () => { building = false; draw(); } }, "Close"),
+      ]);
+    }
+
     const itemsHost = el("div", { class: "list" });
 
     function drawItems() {
@@ -242,7 +306,7 @@ export function renderQuizBuilder(container, uid) {
       if (promptMode === "audio") {
         const blob = itemRecorder?.getBlob();
         if (!blob) { toast("Record the prompt audio first.", "error"); return; }
-        const path = `audio/quiz-prompts/${uid}-${Date.now()}.webm`;
+        const path = `audio/quiz-prompts/${masterProfileId}-${Date.now()}.webm`;
         promptAudioURL = await uploadAudioBlob(blob, path);
       } else {
         promptText = promptLangSelect.value === "it" ? c.italian : c.english;
@@ -262,21 +326,29 @@ export function renderQuizBuilder(container, uid) {
       drawItems();
     });
 
-    const assignSelect = el("select", { name: "assignedTo" }, [
-      el("option", { value: "all" }, "All students"),
-      ...students.map((s) => el("option", { value: s.id }, s.displayName || s.email)),
-    ]);
+    const studentChecks = el("div", { class: "chip-row" }, roster.map((s) =>
+      el("button", {
+        type: "button",
+        class: `chip ${selectedStudentIds.has(s.id) ? "chip--active" : ""}`,
+        onclick: (e) => {
+          if (selectedStudentIds.has(s.id)) selectedStudentIds.delete(s.id); else selectedStudentIds.add(s.id);
+          e.target.classList.toggle("chip--active");
+        },
+      }, s.displayName || s.email)
+    ));
+
     const titleInput = el("input", { name: "title", placeholder: "e.g. Week 3 vocab check", required: true });
 
     const saveBtn = el("button", { type: "button", class: "btn btn--primary" }, "Save & assign quiz");
     saveBtn.addEventListener("click", async () => {
       if (!titleInput.value.trim()) { toast("Give the quiz a title.", "error"); return; }
       if (!draftItems.length) { toast("Add at least one item.", "error"); return; }
+      if (!selectedStudentIds.size) { toast("Select at least one student.", "error"); return; }
       await createQuiz({
         title: titleInput.value.trim(),
-        assignedTo: assignSelect.value,
+        assignedTo: [...selectedStudentIds],
         items: draftItems,
-        createdBy: uid,
+        createdBy: masterProfileId,
       });
       toast("Quiz created!", "success");
       building = false;
@@ -289,7 +361,7 @@ export function renderQuizBuilder(container, uid) {
     return el("div", { class: "editor-card" }, [
       el("h3", {}, "Build a quiz"),
       el("label", { class: "field" }, [el("span", {}, "Title"), titleInput]),
-      el("label", { class: "field" }, [el("span", {}, "Assign to"), assignSelect]),
+      el("label", { class: "field" }, [el("span", {}, "Assign to"), studentChecks]),
       el("div", { class: "builder-grid" }, [
         el("label", { class: "field" }, [el("span", {}, "Content item"), contentSelect]),
         el("label", { class: "field" }, [el("span", {}, "Prompt language"), promptLangSelect]),
@@ -329,8 +401,8 @@ export function renderQuizBuilder(container, uid) {
   }
 
   function renderSubmissionGrader(quiz, sub) {
-    const student = students.find((s) => s.id === sub.id);
-    const marks = quiz.items.map(() => true); // default: correct
+    const student = roster.find((s) => s.id === sub.id);
+    const marks = quiz.items.map(() => true);
 
     const rows = quiz.items.map((item, i) => {
       const ans = sub.answers.find((a) => a.itemIndex === i) || {};
@@ -346,11 +418,7 @@ export function renderQuizBuilder(container, uid) {
             : el("strong", {}, ans.responseText || "(blank)"),
         ]),
         el("label", { class: "grade-toggle" }, [
-          el("input", {
-            type: "checkbox",
-            checked: true,
-            onchange: (e) => { marks[i] = e.target.checked; },
-          }),
+          el("input", { type: "checkbox", checked: true, onchange: (e) => { marks[i] = e.target.checked; } }),
           el("span", {}, "Correct"),
         ]),
       ]);
@@ -359,9 +427,7 @@ export function renderQuizBuilder(container, uid) {
     const submitBtn = el("button", { class: "btn btn--primary btn--sm", type: "button" }, "Save grades");
     submitBtn.addEventListener("click", async () => {
       const grading = quiz.items.map((item, i) => ({
-        itemIndex: i,
-        correct: marks[i],
-        pointsAwarded: marks[i] ? item.points : 0,
+        itemIndex: i, correct: marks[i], pointsAwarded: marks[i] ? item.points : 0,
       }));
       const total = grading.reduce((s, g) => s + g.pointsAwarded, 0);
       await gradeSubmission(quiz.id, sub.id, grading, total);
@@ -378,7 +444,7 @@ export function renderQuizBuilder(container, uid) {
 
 /* ── Rewards management ───────────────────────────────────────────── */
 
-export function renderRewardsManager(container, uid) {
+export function renderRewardsManager(container, masterProfileId) {
   let rewards = [];
   listenRewards((r) => { rewards = r; draw(); });
 
@@ -406,7 +472,7 @@ export function renderRewardsManager(container, uid) {
         title: fd.get("title").trim(),
         pointThreshold: Number(fd.get("pointThreshold")),
         description: fd.get("description").trim() || null,
-        createdBy: uid,
+        createdBy: masterProfileId,
       });
       toast("Reward added.", "success");
       form.reset();
@@ -416,26 +482,6 @@ export function renderRewardsManager(container, uid) {
       el("h2", { class: "view-title" }, "Rewards"),
       form,
       list,
-    ]));
-  }
-}
-
-/* ── Master dashboard: student overview ───────────────────────────── */
-
-export function renderMasterDashboard(container) {
-  let students = [];
-  listenAllStudents((s) => { students = s; draw(); });
-
-  function draw() {
-    mount(container, el("div", { class: "view" }, [
-      el("h2", { class: "view-title" }, "Students"),
-      el("div", { class: "list" }, students.length ? students.map((s) => el("div", { class: "list-row" }, [
-        el("div", {}, [
-          el("strong", {}, s.displayName || s.email),
-          el("p", { class: "muted" }, s.email),
-        ]),
-        el("span", { class: "hero-strip__number hero-strip__number--sm" }, String(s.totalPoints || 0)),
-      ])) : [el("p", { class: "muted" }, "No students have signed up yet.")]),
     ]));
   }
 }
@@ -472,7 +518,7 @@ export function renderMasterSettings(container) {
       form,
       el("div", { class: "panel" }, [
         el("h3", {}, "Approve new sign-ups"),
-        el("p", { class: "muted" }, "To let someone create an account, add a document to the allowedEmails collection in the Firebase console: document ID = their lowercase email address (any field inside is fine, e.g. addedAt: now)."),
+        el("p", { class: "muted" }, "To let someone sign in with Google, add a document to the allowedEmails collection in the Firebase console: document ID = their lowercase Google email address (any field inside is fine, e.g. addedAt: now)."),
       ]),
     ]));
   });
