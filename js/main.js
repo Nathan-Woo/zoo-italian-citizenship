@@ -166,11 +166,17 @@ function renderShell() {
       }, `+ Try as ${isMaster ? "Studente" : "Maestro"}`);
 
   const nav = el("nav", { class: "app-nav" }, [
-    el("div", { class: "app-nav__brand" }, [
-      el("span", { class: "app-nav__emblem" }, "🛂"),
-      el("div", {}, [
-        el("span", { class: "app-nav__title" }, "Zoo's Italian Citizenship"),
-        el("span", { class: "app-nav__role" }, isMaster ? "Maestro" : "Studente"),
+    el("div", { class: "app-nav__top" }, [
+      el("div", { class: "app-nav__brand" }, [
+        el("span", { class: "app-nav__emblem" }, "🛂"),
+        el("div", {}, [
+          el("span", { class: "app-nav__title" }, "Zoo's Italian Citizenship"),
+          el("span", { class: "app-nav__role" }, isMaster ? "Maestro" : "Studente"),
+        ]),
+      ]),
+      el("div", { class: "app-nav__top-actions" }, [
+        roleSwitcher,
+        el("button", { class: "btn btn--ghost btn--sm app-nav__logout", onclick: logOut }, "Log out"),
       ]),
     ]),
     el("div", { class: "app-nav__tabs" }, tabs.map((t) =>
@@ -179,8 +185,6 @@ function renderShell() {
         onclick: () => { activeTab = t.key; renderShell(); },
       }, t.label)
     )),
-    roleSwitcher,
-    el("button", { class: "btn btn--ghost btn--sm app-nav__logout", onclick: logOut }, "Log out"),
   ]);
 
   const main = el("main", { class: "app-main" });
