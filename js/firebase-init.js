@@ -21,18 +21,21 @@ const firebaseConfig = {
   appId: "1:152159320100:web:8c9d47ba118b09fd4f00b1"
 };
 
+
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 // Firestore's default real-time transport is a streaming connection.
-// Some networks/proxies/browser setups let plain HTTPS through fine but
-// silently break that streaming channel, which the SDK then reports as
-// "client is offline" even though the network is actually fine.
-// experimentalAutoDetectLongPolling makes the SDK detect that case and
-// fall back to plain long-polling instead — this is the standard fix
-// for that exact symptom (see https://github.com/firebase/firebase-js-sdk/issues/1674).
+// Some networks (corporate/school firewalls, antivirus with HTTPS
+// inspection, some routers) let plain short HTTPS requests through fine
+// but kill or mangle long-lived streaming ones — the SDK then reports
+// "client is offline" even though the network itself is fine.
+// experimentalForceLongPolling skips auto-detection (which can itself
+// get confused on hostile networks) and forces plain long-polling
+// outright. Slightly less efficient than streaming, but far more
+// reliable on networks like this.
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
   useFetchStreams: false,
 });
 
