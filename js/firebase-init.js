@@ -9,7 +9,7 @@ import {
   setPersistence,
   browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -23,9 +23,23 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Firestore's default real-time transport is a streaming connection.
+// Some networks/proxies/browser setups let plain HTTPS through fine but
+// silently break that streaming channel, which the SDK then reports as
+// "client is offline" even though the network is actually fine.
+// experimentalAutoDetectLongPolling makes the SDK detect that case and
+// fall back to plain long-polling instead — this is the standard fix
+// for that exact symptom (see https://github.com/firebase/firebase-js-sdk/issues/1674).
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+  useFetchStreams: false,
+});
+
 export const storage = getStorage(app);
 
 setPersistence(auth, browserLocalPersistence).catch((err) =>
   console.error("Auth persistence error:", err)
 );
+
+console.log("Firebase project:", firebaseConfig.projectId);
