@@ -1,0 +1,13 @@
+{
+  "name": "zoo-italian-citizenship-functions",
+  "description": "Cloud Functions for Zoo's Italian Citizenship — currently just the AI content-suggestion endpoint.",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.1.0",
+    "firebase-functions": "^5.0.0"
+  },
+  "private": true
+}

@@ -1,5 +1,5 @@
 import { el, mount, toast, typeLabel } from "../dom.js";
-import { listenContent, getSelfStudySettings, getTodaysSelfStudyEarned, awardSelfStudyPoints } from "../db.js";
+import { listenContent, listenPacks, getSelfStudySettings, getTodaysSelfStudyEarned, awardSelfStudyPoints } from "../db.js";
 import { playButton } from "./audio-widget.js";
 import { isAnswerCorrect } from "../grading.js";
 
@@ -78,7 +78,9 @@ export function renderFlashcards(container) {
 
 export function renderSelfStudy(container, profileId) {
   let allContent = [];
+  let packs = [];
   let selectedTypes = new Set(TYPES);
+  let selectedPackId = "all";
   let count = 10;
   let session = null; // { items, answers }
   let settings = null;
@@ -87,11 +89,13 @@ export function renderSelfStudy(container, profileId) {
   async function init() {
     settings = await getSelfStudySettings();
     earnedToday = await getTodaysSelfStudyEarned(profileId);
+    listenPacks((list) => { packs = list; drawSetup(); });
     listenContent((list) => { allContent = list; drawSetup(); });
   }
 
   function drawSetup() {
-    const pool = allContent.filter((c) => selectedTypes.has(c.type));
+    let pool = allContent.filter((c) => selectedTypes.has(c.type));
+    if (selectedPackId !== "all") pool = pool.filter((c) => (c.packIds || []).includes(selectedPackId));
     const maxCount = Math.min(30, pool.length);
 
     const typeToggles = el("div", { class: "chip-row" }, TYPES.map((t) =>
@@ -105,6 +109,16 @@ export function renderSelfStudy(container, profileId) {
         },
       }, typeLabel(t))
     ));
+
+    const packToggles = packs.length
+      ? el("div", { class: "chip-row" }, ["all", ...packs.map((p) => p.id)].map((pid) =>
+          el("button", {
+            class: `chip ${selectedPackId === pid ? "chip--active" : ""}`,
+            type: "button",
+            onclick: () => { selectedPackId = pid; drawSetup(); },
+          }, pid === "all" ? "All packs" : packs.find((p) => p.id === pid).name)
+        ))
+      : null;
 
     const remaining = Math.max(0, settings.dailyMaxPoints - earnedToday);
 
@@ -121,6 +135,9 @@ export function renderSelfStudy(container, profileId) {
           el("span", {}, "Categories"),
           typeToggles,
         ]),
+        packToggles
+          ? el("label", { class: "field" }, [el("span", {}, "Pack"), packToggles])
+          : null,
         el("label", { class: "field" }, [
           el("span", {}, `Number of questions (up to ${maxCount || 0} available)`),
           el("input", {

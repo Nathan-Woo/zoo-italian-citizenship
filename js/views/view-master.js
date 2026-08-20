@@ -1,14 +1,17 @@
 import { el, mount, toast, fmtDate, typeLabel, stampBadge } from "../dom.js";
 import {
   listenContent, addContent, updateContent, deleteContent,
+  listenPacks, addPack, deletePack,
   listenQuizzes, createQuiz, deleteQuiz,
   listenAllSubmissionsForQuiz, gradeSubmission,
-  listenRoster, addStudentToRosterByEmail, removeStudentFromRoster,
+  listenRoster, addStudentToRosterByUsername, removeStudentFromRoster,
   listenRewards, addReward, deleteReward,
   getSelfStudySettings, updateSelfStudySettings,
 } from "../db.js";
 import { createRecorderWidget, playButton } from "./audio-widget.js";
+import { createMiniToggle, createSearchSelect } from "./compact-controls.js";
 import { uploadAudioBlob, deleteAudio } from "../audio.js";
+import { requestContentSuggestions } from "../ai.js";
 
 const TYPES = ["vocab", "phrase", "sentence", "conjugation"];
 
@@ -19,19 +22,19 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
   listenRoster(masterProfileId, (r) => { roster = r; draw(); });
 
   function draw() {
-    const emailInput = el("input", { type: "email", placeholder: "student@email.com", required: true });
+    const usernameInput = el("input", { type: "text", placeholder: "e.g. Ari", required: true });
     const addForm = el("form", { class: "row-actions", onsubmit: handleAdd }, [
-      emailInput,
+      usernameInput,
       el("button", { class: "btn btn--primary btn--sm", type: "submit" }, "Add to roster"),
     ]);
 
     async function handleAdd(e) {
       e.preventDefault();
-      const result = await addStudentToRosterByEmail(masterProfileId, emailInput.value);
+      const result = await addStudentToRosterByUsername(masterProfileId, usernameInput.value);
       if (result === "added") toast("Added to your roster.", "success");
       else if (result === "already-in-roster") toast("Already on your roster.", "info");
-      else toast("No student account found with that email yet — they need to sign in and choose Studente first.", "error");
-      emailInput.value = "";
+      else toast("No student account found with that username yet — they need to sign in and choose Studente first.", "error");
+      usernameInput.value = "";
     }
 
     mount(container, el("div", { class: "view" }, [
@@ -40,6 +43,7 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
       ]),
       el("div", { class: "panel" }, [
         el("h3", {}, "Add a student"),
+        el("p", { class: "muted small" }, "Enter the username they chose when they set up their Studente account."),
         addForm,
         !hasOwnStudentProfile
           ? el("button", {
@@ -53,7 +57,6 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
         ? roster.map((s) => el("div", { class: "list-row" }, [
             el("div", {}, [
               el("strong", {}, s.displayName || s.email),
-              el("p", { class: "muted" }, s.email),
             ]),
             el("div", { class: "row-actions" }, [
               el("span", { class: "hero-strip__number hero-strip__number--sm" }, String(s.totalPoints || 0)),
@@ -69,21 +72,37 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
 
 export function renderContentLibrary(container, masterProfileId) {
   let items = [];
+  let packs = [];
   let filterType = "all";
+  let filterPack = "all";
   let editing = null;
   let removeAudioFlag = false;
+  let editingPackIds = new Set();
+  let showPacksPanel = false;
+  let showSuggestPanel = false;
 
   listenContent((list) => { items = list; draw(); });
+  listenPacks((list) => { packs = list; draw(); });
 
   function draw() {
-    const filtered = filterType === "all" ? items : items.filter((i) => i.type === filterType);
+    let filtered = filterType === "all" ? items : items.filter((i) => i.type === filterType);
+    if (filterPack !== "all") filtered = filtered.filter((i) => (i.packIds || []).includes(filterPack));
 
-    const tabs = el("div", { class: "tabbar" }, ["all", ...TYPES].map((t) =>
+    const typeTabs = el("div", { class: "tabbar" }, ["all", ...TYPES].map((t) =>
       el("button", {
         class: `tab ${filterType === t ? "tab--active" : ""}`,
         onclick: () => { filterType = t; draw(); },
-      }, t === "all" ? "All" : typeLabel(t))
+      }, t === "all" ? "All types" : typeLabel(t))
     ));
+
+    const packTabs = packs.length
+      ? el("div", { class: "tabbar tabbar--sm" }, ["all", ...packs.map((p) => p.id)].map((pid) =>
+          el("button", {
+            class: `tab ${filterPack === pid ? "tab--active" : ""}`,
+            onclick: () => { filterPack = pid; draw(); },
+          }, pid === "all" ? "All packs" : packs.find((p) => p.id === pid).name)
+        ))
+      : null;
 
     const table = el("div", { class: "list" }, filtered.length
       ? filtered.map((item) => el("div", { class: "list-row" }, [
@@ -92,10 +111,13 @@ export function renderContentLibrary(container, masterProfileId) {
             el("strong", {}, ` ${item.italian} `),
             el("span", { class: "muted" }, `→ ${item.english}`),
             item.hint ? el("div", { class: "muted small" }, `Hint: ${item.hint}`) : null,
+            (item.packIds || []).length
+              ? el("div", { class: "muted small" }, `Packs: ${item.packIds.map((pid) => packs.find((p) => p.id === pid)?.name).filter(Boolean).join(", ")}`)
+              : null,
           ]),
           el("div", { class: "row-actions" }, [
             item.audioURL ? playButton(item.audioURL) : el("span", { class: "muted small" }, "No audio"),
-            el("button", { class: "btn btn--ghost btn--sm", onclick: () => { editing = item; removeAudioFlag = false; draw(); } }, "Edit"),
+            el("button", { class: "btn btn--ghost btn--sm", onclick: () => { editing = item; removeAudioFlag = false; editingPackIds = new Set(item.packIds || []); draw(); } }, "Edit"),
             el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: () => handleDelete(item) }, "Delete"),
           ]),
         ]))
@@ -104,12 +126,132 @@ export function renderContentLibrary(container, masterProfileId) {
     mount(container, el("div", { class: "view" }, [
       el("div", { class: "panel__head" }, [
         el("h2", { class: "view-title" }, "Content Library"),
-        el("button", { class: "btn btn--primary btn--sm", onclick: () => { editing = {}; removeAudioFlag = false; draw(); } }, "+ Add entry"),
+        el("div", { class: "row-actions" }, [
+          el("button", { class: "btn btn--ghost btn--sm", onclick: () => { showPacksPanel = !showPacksPanel; draw(); } }, showPacksPanel ? "Hide packs" : "Manage packs"),
+          el("button", { class: "btn btn--ghost btn--sm", onclick: () => { showSuggestPanel = !showSuggestPanel; draw(); } }, "✨ Suggest for me"),
+          el("button", { class: "btn btn--primary btn--sm", onclick: () => { editing = {}; removeAudioFlag = false; editingPackIds = new Set(); draw(); } }, "+ Add entry"),
+        ]),
       ]),
-      tabs,
+      showPacksPanel ? renderPacksPanel() : null,
+      showSuggestPanel ? renderSuggestPanel() : null,
+      typeTabs,
+      packTabs,
       table,
       editing ? renderEditor() : null,
     ]));
+  }
+
+  function renderPacksPanel() {
+    const nameInput = el("input", { type: "text", placeholder: "e.g. Restaurant vocab, Chapter 3" });
+    const addBtn = el("button", { class: "btn btn--primary btn--sm", type: "button" }, "+ Create pack");
+    addBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      if (!name) { toast("Give the pack a name.", "error"); return; }
+      await addPack({ name, createdBy: masterProfileId });
+      nameInput.value = "";
+      toast("Pack created.", "success");
+    });
+
+    return el("div", { class: "editor-card" }, [
+      el("h3", {}, "Packs"),
+      el("p", { class: "muted small" }, "Group related content so students and quizzes can pull in a whole set at once."),
+      el("div", { class: "row-actions" }, [nameInput, addBtn]),
+      el("div", { class: "list" }, packs.length
+        ? packs.map((p) => el("div", { class: "list-row" }, [
+            el("div", {}, [
+              el("strong", {}, p.name),
+              el("p", { class: "muted small" }, `${items.filter((i) => (i.packIds || []).includes(p.id)).length} items`),
+            ]),
+            el("button", {
+              class: "btn btn--ghost btn--sm btn--danger",
+              onclick: async () => {
+                if (!confirm(`Delete pack "${p.name}"? Items stay in the library, just ungrouped.`)) return;
+                await deletePack(p.id);
+                toast("Pack deleted.", "info");
+              },
+            }, "Delete"),
+          ]))
+        : [el("p", { class: "muted" }, "No packs yet.")]),
+    ]);
+  }
+
+  function renderSuggestPanel() {
+    const typeSelect = el("select", {}, [
+      el("option", { value: "any" }, "Any type"),
+      ...TYPES.map((t) => el("option", { value: t }, typeLabel(t))),
+    ]);
+    const countInput = el("input", { type: "number", min: "1", max: "20", value: "8" });
+    const notesInput = el("textarea", { rows: "2", placeholder: "Optional: a theme or focus, e.g. \"ordering food at a restaurant\" or \"past tense of common verbs\"" });
+    const generateBtn = el("button", { class: "btn btn--primary btn--sm", type: "button" }, "Generate suggestions");
+    const resultsHost = el("div", { class: "list" });
+    let suggestions = [];
+    let accepted = new Set();
+
+    generateBtn.addEventListener("click", async () => {
+      generateBtn.disabled = true;
+      generateBtn.textContent = "Thinking…";
+      resultsHost.innerHTML = "";
+      try {
+        suggestions = await requestContentSuggestions({
+          focusType: typeSelect.value,
+          notes: notesInput.value,
+          count: Number(countInput.value) || 8,
+        });
+        accepted = new Set(suggestions.map((_, i) => i));
+        drawResults();
+      } catch (err) {
+        toast(err.message || "Couldn't get suggestions right now.", "error");
+      } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "Generate suggestions";
+      }
+    });
+
+    function drawResults() {
+      mount(resultsHost, el("div", {}, suggestions.length
+        ? [
+            ...suggestions.map((s, i) => el("label", { class: "list-row suggest-row" }, [
+              el("input", {
+                type: "checkbox",
+                checked: accepted.has(i),
+                onchange: (e) => { e.target.checked ? accepted.add(i) : accepted.delete(i); },
+              }),
+              el("div", {}, [
+                el("span", { class: "chip chip--static" }, typeLabel(s.type)),
+                el("strong", {}, ` ${s.italian} `),
+                el("span", { class: "muted" }, `→ ${s.english}`),
+                s.hint ? el("div", { class: "muted small" }, `Hint: ${s.hint}`) : null,
+              ]),
+            ])),
+            el("button", {
+              class: "btn btn--primary btn--sm",
+              type: "button",
+              onclick: async () => {
+                const toAdd = suggestions.filter((_, i) => accepted.has(i));
+                for (const s of toAdd) {
+                  await addContent({ type: s.type, italian: s.italian, english: s.english, hint: s.hint || null, createdBy: masterProfileId });
+                }
+                toast(`Added ${toAdd.length} item${toAdd.length === 1 ? "" : "s"}.`, "success");
+                suggestions = [];
+                drawResults();
+              },
+            }, "Add selected to library"),
+          ]
+        : [el("p", { class: "muted" }, "No suggestions yet — fill in the options above and generate some.")]
+      ));
+    }
+
+    return el("div", { class: "editor-card" }, [
+      el("h3", {}, "✨ Suggest content"),
+      el("p", { class: "muted small" }, "Uses AI to propose new vocab/phrases based on what's already in your library. Review before adding — nothing is saved automatically."),
+      el("div", { class: "builder-grid" }, [
+        el("label", { class: "field" }, [el("span", {}, "Type"), typeSelect]),
+        el("label", { class: "field" }, [el("span", {}, "How many"), countInput]),
+      ]),
+      el("label", { class: "field" }, [el("span", {}, "Focus / theme (optional)"), notesInput]),
+      generateBtn,
+      resultsHost,
+    ]);
   }
 
   async function handleDelete(item) {
@@ -122,6 +264,17 @@ export function renderContentLibrary(container, masterProfileId) {
   function renderEditor() {
     const isNew = !editing.id;
     let recorderWidget = null;
+
+    const packChips = el("div", { class: "chip-row" }, packs.length
+      ? packs.map((p) => el("button", {
+          type: "button",
+          class: `chip ${editingPackIds.has(p.id) ? "chip--active" : ""}`,
+          onclick: (e) => {
+            if (editingPackIds.has(p.id)) editingPackIds.delete(p.id); else editingPackIds.add(p.id);
+            e.currentTarget.classList.toggle("chip--active");
+          },
+        }, p.name))
+      : [el("p", { class: "muted small" }, "No packs yet — create one above to organize entries.")]);
 
     const form = el("form", { class: "editor-card", onsubmit: handleSave }, [
       el("h3", {}, isNew ? "New content" : "Edit content"),
@@ -148,6 +301,10 @@ export function renderContentLibrary(container, masterProfileId) {
         el("input", { name: "tags", value: editing.tags || "" }),
       ]),
       el("div", { class: "field" }, [
+        el("span", {}, "Packs"),
+        packChips,
+      ]),
+      el("div", { class: "field" }, [
         el("span", {}, "Voice recording (Italian pronunciation)"),
         editing.audioURL && !removeAudioFlag
           ? el("div", { class: "row-actions" }, [
@@ -171,6 +328,7 @@ export function renderContentLibrary(container, masterProfileId) {
         english: fd.get("english").trim(),
         hint: fd.get("hint").trim() || null,
         tags: fd.get("tags").trim() || null,
+        packIds: [...editingPackIds],
         createdBy: masterProfileId,
       };
       try {
@@ -209,6 +367,7 @@ export function renderQuizBuilder(container, masterProfileId) {
   let rawQuizzes = [];
   let roster = [];
   let content = [];
+  let packs = [];
   let building = false;
   let draftItems = [];
   let selectedStudentIds = new Set();
@@ -216,12 +375,11 @@ export function renderQuizBuilder(container, masterProfileId) {
   listenQuizzes((q) => { rawQuizzes = q; draw(); });
   listenRoster(masterProfileId, (r) => { roster = r; draw(); });
   listenContent((c) => { content = c; draw(); });
+  listenPacks((p) => { packs = p; draw(); });
 
   function draw() {
-    // Only show quizzes this master created (own roster's quizzes),
-    // recomputed here (not inside the listeners) since roster and quiz
-    // data arrive from two independent listeners.
     const quizzes = rawQuizzes.filter((quiz) => quiz.createdBy === masterProfileId);
+
     mount(container, el("div", { class: "view" }, [
       el("div", { class: "panel__head" }, [
         el("h2", { class: "view-title" }, "Quizzes"),
@@ -256,74 +414,108 @@ export function renderQuizBuilder(container, masterProfileId) {
       const rows = draftItems.map((it, i) => el("div", { class: "list-row" }, [
         el("div", {}, [
           el("strong", {}, `${it.promptLang === "it" ? "IT" : "EN"} → ${it.responseLang === "it" ? "IT" : "EN"}`),
-          el("span", { class: "muted" }, ` · ${it.promptMode === "audio" ? "audio prompt" : `"${it.promptText}"`} · respond by ${it.responseMode} · ${it.points} pt`),
+          el("span", { class: "muted" }, ` · ${it.promptMode === "audio" ? "🎙 audio prompt" : `"${it.promptText}"`} · reply by ${it.responseMode === "audio" ? "🎙" : "typing"} · ${it.points} pt`),
         ]),
         el("button", { class: "btn btn--ghost btn--sm btn--danger", type: "button", onclick: () => { draftItems.splice(i, 1); drawItems(); } }, "Remove"),
       ]));
       mount(itemsHost, el("div", {}, rows.length ? rows : [el("p", { class: "muted" }, "No items added yet.")]));
     }
 
-    const contentSelect = el("select", { name: "contentId" }, content.map((c) =>
-      el("option", { value: c.id }, `[${typeLabel(c.type)}] ${c.italian} / ${c.english}`)
-    ));
-    const promptLangSelect = el("select", { name: "promptLang" }, [
-      el("option", { value: "it" }, "Italian"),
-      el("option", { value: "en" }, "English"),
-    ]);
-    const responseLangSelect = el("select", { name: "responseLang" }, [
-      el("option", { value: "en" }, "English"),
-      el("option", { value: "it" }, "Italian"),
-    ]);
-    const promptModeSelect = el("select", { name: "promptMode" }, [
-      el("option", { value: "text" }, "Typed"),
-      el("option", { value: "audio" }, "Your voice recording"),
-    ]);
-    const responseModeSelect = el("select", { name: "responseMode" }, [
-      el("option", { value: "text" }, "Typed"),
-      el("option", { value: "audio" }, "Student's voice recording"),
-    ]);
-    const pointsInput = el("input", { type: "number", name: "points", value: "5", min: "1" });
-
-    let itemRecorder = null;
-    const audioSlot = el("div");
-    promptModeSelect.addEventListener("change", () => {
-      if (promptModeSelect.value === "audio") {
-        itemRecorder = createRecorderWidget();
-        mount(audioSlot, itemRecorder.node);
-      } else {
-        itemRecorder = null;
-        mount(audioSlot, el("span"));
-      }
+    // Compact search-to-add content picker, replacing a giant <select>.
+    const searchSelect = createSearchSelect({
+      items: content.map((c) => ({
+        id: c.id,
+        label: `${c.italian} / ${c.english}`,
+        sublabel: typeLabel(c.type) + (c.audioURL ? " · has audio" : ""),
+      })),
+      placeholder: "Type to search content…",
     });
 
-    const addItemBtn = el("button", { type: "button", class: "btn btn--ghost" }, "+ Add item to quiz");
-    addItemBtn.addEventListener("click", async () => {
-      const c = content.find((x) => x.id === contentSelect.value);
-      if (!c) { toast("Add some content to the library first.", "error"); return; }
-      const promptMode = promptModeSelect.value;
-      let promptText = null;
-      let promptAudioURL = null;
+    // Four compact tap-to-cycle controls instead of four stacked <select>s.
+    const promptLangToggle = createMiniToggle({
+      label: "PROMPT", options: [{ value: "it", display: "IT" }, { value: "en", display: "EN" }], value: "it",
+    });
+    const promptModeToggle = createMiniToggle({
+      label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text",
+    });
+    const responseLangToggle = createMiniToggle({
+      label: "REPLY", options: [{ value: "en", display: "EN" }, { value: "it", display: "IT" }], value: "en",
+    });
+    const responseModeToggle = createMiniToggle({
+      label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text",
+    });
+    const pointsInput = el("input", { type: "number", value: "5", min: "1", class: "mini-points" });
+
+    const toggleRow = el("div", { class: "mini-toggle-row" }, [
+      promptLangToggle.node, promptModeToggle.node, responseLangToggle.node, responseModeToggle.node,
+    ]);
+
+    function buildItemFromContent(c, opts) {
+      const promptMode = opts.promptMode;
+      let promptText = null, promptAudioURL = null;
       if (promptMode === "audio") {
-        const blob = itemRecorder?.getBlob();
-        if (!blob) { toast("Record the prompt audio first.", "error"); return; }
-        const path = `audio/quiz-prompts/${masterProfileId}-${Date.now()}.webm`;
-        promptAudioURL = await uploadAudioBlob(blob, path);
+        if (!c.audioURL) return null; // caller decides whether to skip or warn
+        promptAudioURL = c.audioURL;
       } else {
-        promptText = promptLangSelect.value === "it" ? c.italian : c.english;
+        promptText = opts.promptLang === "it" ? c.italian : c.english;
       }
-      draftItems.push({
+      return {
         contentId: c.id,
-        promptLang: promptLangSelect.value,
-        responseLang: responseLangSelect.value,
+        promptLang: opts.promptLang,
+        responseLang: opts.responseLang,
         promptMode,
         promptText,
         promptAudioURL,
-        responseMode: responseModeSelect.value,
+        responseMode: opts.responseMode,
+        points: opts.points,
+      };
+    }
+
+    const addItemBtn = el("button", { type: "button", class: "btn btn--ghost btn--sm" }, "+ Add item");
+    addItemBtn.addEventListener("click", () => {
+      const contentId = searchSelect.getSelectedId();
+      const c = content.find((x) => x.id === contentId);
+      if (!c) { toast("Search and pick a content item first.", "error"); return; }
+      const opts = {
+        promptLang: promptLangToggle.getValue(),
+        promptMode: promptModeToggle.getValue(),
+        responseLang: responseLangToggle.getValue(),
+        responseMode: responseModeToggle.getValue(),
         points: Number(pointsInput.value) || 1,
-      });
-      itemRecorder = null;
-      mount(audioSlot, el("span"));
+      };
+      const item = buildItemFromContent(c, opts);
+      if (!item) {
+        toast(`"${c.italian}" has no recording — add one in the Content Library first, or switch to Typed.`, "error");
+        return;
+      }
+      draftItems.push(item);
+      searchSelect.clear();
       drawItems();
+    });
+
+    const packSelect = el("select", {}, [
+      el("option", { value: "" }, packs.length ? "Choose a pack…" : "No packs yet"),
+      ...packs.map((p) => el("option", { value: p.id }, `${p.name} (${content.filter((c) => (c.packIds || []).includes(p.id)).length})`)),
+    ]);
+    const addPackBtn = el("button", { type: "button", class: "btn btn--ghost btn--sm" }, "+ Add entire pack");
+    addPackBtn.addEventListener("click", () => {
+      const packId = packSelect.value;
+      if (!packId) { toast("Choose a pack first.", "error"); return; }
+      const opts = {
+        promptLang: promptLangToggle.getValue(),
+        promptMode: promptModeToggle.getValue(),
+        responseLang: responseLangToggle.getValue(),
+        responseMode: responseModeToggle.getValue(),
+        points: Number(pointsInput.value) || 1,
+      };
+      const packContent = content.filter((c) => (c.packIds || []).includes(packId));
+      let added = 0, skipped = 0;
+      packContent.forEach((c) => {
+        const item = buildItemFromContent(c, opts);
+        if (item) { draftItems.push(item); added++; } else { skipped++; }
+      });
+      drawItems();
+      toast(`Added ${added} item${added === 1 ? "" : "s"}${skipped ? `, skipped ${skipped} with no recording` : ""}.`, added ? "success" : "error");
     });
 
     const studentChecks = el("div", { class: "chip-row" }, roster.map((s) =>
@@ -362,16 +554,15 @@ export function renderQuizBuilder(container, masterProfileId) {
       el("h3", {}, "Build a quiz"),
       el("label", { class: "field" }, [el("span", {}, "Title"), titleInput]),
       el("label", { class: "field" }, [el("span", {}, "Assign to"), studentChecks]),
-      el("div", { class: "builder-grid" }, [
-        el("label", { class: "field" }, [el("span", {}, "Content item"), contentSelect]),
-        el("label", { class: "field" }, [el("span", {}, "Prompt language"), promptLangSelect]),
-        el("label", { class: "field" }, [el("span", {}, "Prompt presented as"), promptModeSelect]),
-        audioSlot,
-        el("label", { class: "field" }, [el("span", {}, "Student responds in"), responseLangSelect]),
-        el("label", { class: "field" }, [el("span", {}, "Student responds as"), responseModeSelect]),
-        el("label", { class: "field" }, [el("span", {}, "Points"), pointsInput]),
-      ]),
+
+      el("label", { class: "field" }, [el("span", {}, "Find content"), searchSelect.node]),
+      toggleRow,
+      el("label", { class: "field field--inline" }, [el("span", {}, "Points"), pointsInput]),
       addItemBtn,
+
+      el("div", { class: "pack-add-row" }, [packSelect, addPackBtn]),
+      el("p", { class: "muted small" }, "Adding a pack uses the same Prompt/Reply settings above for every item in it."),
+
       el("h4", {}, "Items in this quiz"),
       itemsHost,
       el("div", { class: "row-actions" }, [

@@ -39,9 +39,25 @@ export async function getProfileOnce(profileId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function createProfile({ profileId, uid, role, email, displayName }) {
+/** Checks whether a username is already taken by someone else's profile
+ * (excludeUid lets the same person reuse their username across their own
+ * student/master profiles without it counting as a conflict). */
+export async function isUsernameTaken(username, excludeUid = null) {
+  const q = query(
+    collection(db, "profiles"),
+    where("usernameLower", "==", username.trim().toLowerCase()),
+    limit(5)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.some((d) => d.data().uid !== excludeUid);
+}
+
+export async function createProfile({ profileId, uid, role, email, username }) {
+  const cleanUsername = username.trim();
   const base = {
-    uid, role, email, displayName: displayName || email.split("@")[0],
+    uid, role, email,
+    displayName: cleanUsername,
+    usernameLower: cleanUsername.toLowerCase(),
     createdAt: serverTimestamp(),
   };
   const data = role === "student"
@@ -62,13 +78,13 @@ export function listenRoster(masterProfileId, callback) {
   });
 }
 
-/** Looks up a student profile by email and adds it to the master's roster.
- * Returns 'added' | 'already-in-roster' | 'not-found'. */
-export async function addStudentToRosterByEmail(masterProfileId, email) {
+/** Looks up a student profile by their username and adds it to the
+ * master's roster. Returns 'added' | 'already-in-roster' | 'not-found'. */
+export async function addStudentToRosterByUsername(masterProfileId, username) {
   const q = query(
     collection(db, "profiles"),
     where("role", "==", "student"),
-    where("email", "==", email.trim().toLowerCase()),
+    where("usernameLower", "==", username.trim().toLowerCase()),
     limit(1)
   );
   const snap = await getDocs(q);
@@ -95,6 +111,25 @@ export async function removeStudentFromRoster(masterProfileId, studentProfileId)
   });
 }
 
+/* ── Packs (named groupings of content, e.g. "Chapter 3", "Travel") ── */
+
+export function listenPacks(callback) {
+  const col = collection(db, "packs");
+  return onSnapshot(query(col, orderBy("name", "asc")), (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    callback(items);
+  });
+}
+
+export async function addPack(data) {
+  return addDoc(collection(db, "packs"), { ...data, createdAt: serverTimestamp() });
+}
+
+export async function deletePack(id) {
+  return deleteDoc(doc(db, "packs", id));
+}
+
 /* ── Content library (vocab / phrases / sentences / conjugations) ───── */
 
 export function listenContent(callback, { type = null } = {}) {
@@ -109,7 +144,7 @@ export function listenContent(callback, { type = null } = {}) {
 }
 
 export async function addContent(data) {
-  return addDoc(collection(db, "content"), { ...data, createdAt: serverTimestamp() });
+  return addDoc(collection(db, "content"), { packIds: [], ...data, createdAt: serverTimestamp() });
 }
 
 export async function updateContent(id, data) {
@@ -232,8 +267,6 @@ export async function getSelfStudySettings() {
   const ref = doc(db, "settings", "selfStudy");
   const snap = await getDoc(ref);
   if (snap.exists()) return snap.data();
-  // Only a master can initialize this doc (see firestore.rules); if a
-  // student gets here first, just use the defaults without persisting.
   try {
     await setDoc(ref, DEFAULT_SELF_STUDY_SETTINGS);
   } catch (e) {

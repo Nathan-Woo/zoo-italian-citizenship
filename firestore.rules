@@ -29,9 +29,11 @@ service cloud.firestore {
     // files" so the same person can switch roles to test the app.
     match /profiles/{profileId} {
       allow get: if ownsProfile(profileId) || isMaster();
-      // isMaster() lists are used for: looking a student up by email to
-      // add to a roster, and reading roster members' profile docs.
-      allow list: if isMaster();
+      // Any signed-in profile can query this collection — needed for:
+      // (a) checking username availability during onboarding, before
+      // the person has any profile of their own yet, and (b) a master
+      // looking up a student by username to add to their roster.
+      allow list: if isSignedIn();
       allow create: if ownsProfile(profileId);
       // A master needs to update a managed student's totalPoints when
       // grading a quiz, and their own managedStudentIds when editing
@@ -54,6 +56,13 @@ service cloud.firestore {
     // Content library — any signed-in profile can read (for practice/
     // quizzes), only a master can write.
     match /content/{contentId} {
+      allow read: if isSignedIn();
+      allow write: if isMaster();
+    }
+
+    // Packs — named groupings of content items. Same access pattern as
+    // content itself.
+    match /packs/{packId} {
       allow read: if isSignedIn();
       allow write: if isMaster();
     }

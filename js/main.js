@@ -75,6 +75,7 @@ async function loadProfilesFor(user) {
     activeTab = "dashboard";
     render();
   } catch (err) {
+    console.error("Firestore connection error — code:", err?.code, "| message:", err?.message, err);
     renderConnectionError(err, () => loadProfilesFor(user));
   }
 }
@@ -96,7 +97,8 @@ function renderConnectionError(err, onRetry) {
     el("div", { class: "auth-card" }, [
       el("span", { class: "auth-eyebrow" }, "MOD. IT-CIT · ERRORE"),
       el("h1", { class: "auth-title" }, "Couldn't reach the database"),
-      el("p", { class: "auth-sub" }, "You're signed in, but the app can't connect to Firestore right now. This is almost always a browser extension (ad blocker/privacy tool) or network filter blocking requests to firestore.googleapis.com — try an incognito window or a different network, then retry."),
+      el("p", { class: "auth-sub" }, "You're signed in, but the app can't read from Firestore right now."),
+      el("p", { class: "muted small" }, `Code: ${err?.code || "unknown"}`),
       el("p", { class: "muted small" }, err?.message || String(err)),
       el("div", { class: "row-actions" }, [
         el("button", { class: "btn btn--primary", onclick: onRetry }, "Try again"),
@@ -110,20 +112,20 @@ function render() {
   if (!authUser) { renderSignIn(app); return; }
 
   if (!activeRole) {
-    renderRoleChoice(app, { onChoose: handleChooseRole, existingRole: null });
+    renderRoleChoice(app, { onChoose: handleChooseRole, existingRole: null, uid: authUser.uid });
     return;
   }
 
   renderShell();
 }
 
-async function handleChooseRole(role) {
+async function handleChooseRole(role, username) {
   const profile = await createProfile({
     profileId: role === "student" ? studentProfileId(authUser.uid) : masterProfileId(authUser.uid),
     uid: authUser.uid,
     role,
     email: authUser.email,
-    displayName: authUser.displayName,
+    username,
   });
   if (role === "student") studentProfile = profile; else masterProfile = profile;
   activeRole = role;
@@ -161,6 +163,8 @@ function renderShell() {
           renderRoleChoice(app, {
             onChoose: handleChooseRole,
             existingRole: activeRole,
+            existingUsername: (isMaster ? masterProfile : studentProfile)?.displayName,
+            uid: authUser.uid,
           });
         },
       }, `+ Try as ${isMaster ? "Studente" : "Maestro"}`);
@@ -207,7 +211,7 @@ function renderTab(main, isMaster) {
               uid: authUser.uid,
               role: "student",
               email: authUser.email,
-              displayName: authUser.displayName,
+              username: masterProfile.displayName,
             });
           }
           await addProfileToRoster(mpId, studentProfile.id);
