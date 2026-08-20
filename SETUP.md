@@ -21,6 +21,7 @@ GitHub Pages. Sign-in is Google-only (no passwords).
 
 **Firestore Database**
 - **Build → Firestore Database → Create database**.
+- **Important: when it asks for a Database ID, use `(default)`** (this is usually the pre-filled default option — don't rename it). If you give it a different name, the app's Firestore client needs to be told that name explicitly (see the note in `js/firebase-init.js`), which is easy to miss and produces a confusing "client is offline" error that has nothing to do with your network.
 - Start in **production mode** (we'll paste in real rules next). Pick a region close to you (e.g. `us-west1` for LA).
 
 **Storage** (for the voice recordings)
@@ -112,7 +113,7 @@ The app only lets pre-approved Google emails sign in.
 
 ## Notes & things worth knowing
 
-- **About the "client is offline" error**: that's a generic Firestore SDK error, usually meaning either (a) `firebase-init.js` still has placeholder config values instead of your real ones, (b) an ad-blocker/extension is blocking Firestore's connection, or (c) an actual network problem. Switching to Google sign-in also removes the one Firestore read that used to happen *before* authentication (checking the allowlist pre-signup) — that pre-auth read was a likely source of exactly this error, since unauthenticated reads are handled more strictly by the SDK. If you still see it after re-checking your config values, try a hard refresh and a different network.
+- **About the "client is offline" error**: this is a generic Firestore SDK message that can mean several different things — in this project's case it turned out to be that the Firestore database was created with a custom Database ID (not the default `(default)`), so the SDK was quietly trying to talk to a database that, as far as it could tell, didn't exist. If you ever recreate the database or start a fresh project, double-check the Database ID shown at the top of Firebase Console → Firestore Database, and make sure `js/firebase-init.js` passes that exact name as the second argument to `getFirestore(app, "your-database-id")` — or just name it `(default)` when creating it and skip the second argument entirely. Other, less likely causes of this same error: placeholder config values still in `firebase-init.js`, or a genuine network block.
 - **Data model**: there's no more `users` collection — everything lives under `profiles/{profileId}`, where `profileId` is `{googleUid}_student` or `{googleUid}_master`. This is what makes the same Google login able to hold two fully separate accounts.
 - **Roster-based visibility**: a master only sees/grades quizzes for students on their own roster. If you and Ari are both masters at some point, your rosters stay independent.
 - **Audio format**: recordings save as `.webm` via the browser's `MediaRecorder`. Works well in Chrome/Edge/Firefox; Safari's recording support is a bit newer/spottier — test on Ari's device early if she's on iPhone.
