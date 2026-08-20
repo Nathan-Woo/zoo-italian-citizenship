@@ -819,3 +819,10 @@ textarea {
   border-radius: 7px;
   resize: vertical;
 }
+
+/* ── Browse tab ──────────────────────────────────────────────────── */
+
+.browse-card { display: flex; flex-direction: column; gap: 10px; }
+.browse-card .panel__head { align-items: flex-start; }
+
+.app-nav__role { display: block; }

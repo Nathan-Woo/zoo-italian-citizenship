@@ -23,10 +23,25 @@ import {
 /* ── Profile IDs ──────────────────────────────────────────────────────
    One Google account (uid) can hold up to two separate "account files":
    a student profile and a master profile, so the same person can switch
-   roles to test the app while keeping the data completely separate. ── */
+   roles to test the app while keeping the data completely separate.
+   (Switching roles is now an admin-only privilege — see isAdminEmail.) */
 
 export function studentProfileId(uid) { return `${uid}_student`; }
 export function masterProfileId(uid) { return `${uid}_master`; }
+
+/* ── Admin check ──────────────────────────────────────────────────── */
+
+/** Approved/admin accounts get elevated powers: switching between
+ * student and master, editing any master's content library, and
+ * setting pack point values / global self-study point rates. Anyone
+ * can still sign up and use the app as a regular master or student. */
+export async function isAdminEmail(email) {
+  const ref = doc(db, "adminEmails", email.trim().toLowerCase());
+  const snap = await getDoc(ref);
+  return snap.exists();
+}
+
+/* ── Profiles ─────────────────────────────────────────────────────── */
 
 export function listenProfile(profileId, callback) {
   return onSnapshot(doc(db, "profiles", profileId), (snap) => {
@@ -52,19 +67,69 @@ export async function isUsernameTaken(username, excludeUid = null) {
   return snap.docs.some((d) => d.data().uid !== excludeUid);
 }
 
-export async function createProfile({ profileId, uid, role, email, username }) {
+export async function createProfile({ profileId, uid, role, email, username, isAdmin }) {
   const cleanUsername = username.trim();
   const base = {
     uid, role, email,
     displayName: cleanUsername,
     usernameLower: cleanUsername.toLowerCase(),
+    isAdmin: !!isAdmin,
     createdAt: serverTimestamp(),
   };
   const data = role === "student"
-    ? { ...base, totalPoints: 0 }
-    : { ...base, managedStudentIds: [] };
+    ? { ...base, totalPoints: 0, includedMasterIds: [], hiddenMasterIds: [] }
+    : { ...base, managedStudentIds: [], includedMasterIds: [], hiddenMasterIds: [] };
   await setDoc(doc(db, "profiles", profileId), data);
   return { id: profileId, ...data };
+}
+
+export function listenAllMasters(callback) {
+  const q = query(collection(db, "profiles"), where("role", "==", "master"));
+  return onSnapshot(q, (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    callback(items);
+  });
+}
+
+/** Masters whose roster includes this student — the student's default
+ * content sources, before any additional ones they opt into. */
+export function listenManagingMasters(studentProfileId, callback) {
+  const q = query(
+    collection(db, "profiles"),
+    where("role", "==", "master"),
+    where("managedStudentIds", "array-contains", studentProfileId)
+  );
+  return onSnapshot(q, (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    callback(items);
+  });
+}
+
+/* ── Include / hide other masters (Browse tab, for both roles) ──────── */
+
+export async function includeMaster(viewerProfileId, otherMasterId) {
+  await updateDoc(doc(db, "profiles", viewerProfileId), {
+    includedMasterIds: arrayUnion(otherMasterId),
+    hiddenMasterIds: arrayRemove(otherMasterId),
+  });
+}
+export async function removeIncludedMaster(viewerProfileId, otherMasterId) {
+  await updateDoc(doc(db, "profiles", viewerProfileId), {
+    includedMasterIds: arrayRemove(otherMasterId),
+  });
+}
+export async function hideMaster(viewerProfileId, otherMasterId) {
+  await updateDoc(doc(db, "profiles", viewerProfileId), {
+    hiddenMasterIds: arrayUnion(otherMasterId),
+    includedMasterIds: arrayRemove(otherMasterId),
+  });
+}
+export async function unhideMaster(viewerProfileId, otherMasterId) {
+  await updateDoc(doc(db, "profiles", viewerProfileId), {
+    hiddenMasterIds: arrayRemove(otherMasterId),
+  });
 }
 
 /* ── Roster (which students a master manages) ────────────────────── */
@@ -78,8 +143,6 @@ export function listenRoster(masterProfileId, callback) {
   });
 }
 
-/** Looks up a student profile by their username and adds it to the
- * master's roster. Returns 'added' | 'already-in-roster' | 'not-found'. */
 export async function addStudentToRosterByUsername(masterProfileId, username) {
   const q = query(
     collection(db, "profiles"),
@@ -111,7 +174,9 @@ export async function removeStudentFromRoster(masterProfileId, studentProfileId)
   });
 }
 
-/* ── Packs (named groupings of content, e.g. "Chapter 3", "Travel") ── */
+/* ── Packs ────────────────────────────────────────────────────────── */
+// Every pack and content item is owned by exactly one master (createdBy).
+// Only that owning master, or an admin, can edit or delete it.
 
 export function listenPacks(callback) {
   const col = collection(db, "packs");
@@ -123,14 +188,24 @@ export function listenPacks(callback) {
 }
 
 export async function addPack(data) {
-  return addDoc(collection(db, "packs"), { ...data, createdAt: serverTimestamp() });
+  return addDoc(collection(db, "packs"), { pointValue: null, ...data, createdAt: serverTimestamp() });
+}
+
+export async function renamePack(id, name) {
+  return updateDoc(doc(db, "packs", id), { name });
+}
+
+/** Admin-only: the point bonus a student earns for a perfect self-study
+ * round scoped to just this pack. */
+export async function setPackPointValue(id, pointValue) {
+  return updateDoc(doc(db, "packs", id), { pointValue: pointValue === "" ? null : Number(pointValue) });
 }
 
 export async function deletePack(id) {
   return deleteDoc(doc(db, "packs", id));
 }
 
-/* ── Content library (vocab / phrases / sentences / conjugations) ───── */
+/* ── Content library ──────────────────────────────────────────────── */
 
 export function listenContent(callback, { type = null } = {}) {
   const col = collection(db, "content");
@@ -155,9 +230,11 @@ export async function deleteContent(id) {
   return deleteDoc(doc(db, "content", id));
 }
 
+export function canEdit(item, masterProfileId, isAdmin) {
+  return isAdmin || item.createdBy === masterProfileId;
+}
+
 /* ── Quizzes ──────────────────────────────────────────────────────── */
-// assignedTo is always an array of student profileIds, resolved at
-// creation time from whichever students the master selected.
 
 export function listenQuizzes(callback) {
   const col = collection(db, "quizzes");
@@ -216,7 +293,7 @@ export async function gradeSubmission(quizId, studentProfileId, grading, totalPo
   await awardPoints(studentProfileId, totalPointsAwarded, "quiz", quizId);
 }
 
-/* ── Points ledger (subcollection under the student's profile) ──────── */
+/* ── Points ledger ────────────────────────────────────────────────── */
 
 export async function awardPoints(profileId, amount, source, refId) {
   if (!amount) return;
@@ -259,18 +336,26 @@ export async function deleteReward(id) {
   return deleteDoc(doc(db, "rewards", id));
 }
 
-/* ── Self-study settings & daily cap ─────────────────────────────── */
+/* ── Self-study settings & daily cap (admin-controlled) ──────────── */
+// pointsPerCorrectSingleSource applies when a self-study round is scoped
+// to one master's content only; pointsPerCorrectMultiSource applies when
+// it spans more than one master. Packs can also carry a flat pointValue
+// bonus (admin-set) awarded on a perfect round scoped to just that pack.
 
-const DEFAULT_SELF_STUDY_SETTINGS = { dailyMaxPoints: 20, pointsPerCorrect: 2 };
+const DEFAULT_SELF_STUDY_SETTINGS = {
+  dailyMaxPoints: 20,
+  pointsPerCorrectSingleSource: 2,
+  pointsPerCorrectMultiSource: 3,
+};
 
 export async function getSelfStudySettings() {
   const ref = doc(db, "settings", "selfStudy");
   const snap = await getDoc(ref);
-  if (snap.exists()) return snap.data();
+  if (snap.exists()) return { ...DEFAULT_SELF_STUDY_SETTINGS, ...snap.data() };
   try {
     await setDoc(ref, DEFAULT_SELF_STUDY_SETTINGS);
   } catch (e) {
-    // Not a master — fine, defaults are used in-memory for this session.
+    // Not an admin — fine, defaults are used in-memory for this session.
   }
   return DEFAULT_SELF_STUDY_SETTINGS;
 }
@@ -290,6 +375,8 @@ export async function getTodaysSelfStudyEarned(profileId) {
   return snap.exists() ? snap.data().earnedToday || 0 : 0;
 }
 
+/** Awards self-study points, respecting the daily cap. Returns the
+ * amount actually awarded (may be less than requested if capped). */
 export async function awardSelfStudyPoints(profileId, rawAmount) {
   const settings = await getSelfStudySettings();
   const ref = doc(db, "profiles", profileId, "selfStudyLog", todayKey());

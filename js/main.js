@@ -2,7 +2,7 @@ import { watchAuthUser, logOut } from "./auth.js";
 import { el, mount } from "./dom.js";
 import {
   studentProfileId, masterProfileId,
-  getProfileOnce, createProfile, addProfileToRoster,
+  getProfileOnce, createProfile, addProfileToRoster, isAdminEmail,
 } from "./db.js";
 import { renderSignIn, renderRoleChoice } from "./views/view-onboarding.js";
 import { renderFlashcards, renderSelfStudy } from "./views/view-practice.js";
@@ -18,6 +18,7 @@ import {
   renderMasterDashboard,
   renderMasterSettings,
 } from "./views/view-master.js";
+import { renderBrowse } from "./views/view-browse.js";
 
 const app = document.getElementById("app");
 
@@ -26,6 +27,7 @@ const STUDENT_TABS = [
   { key: "quizzes", label: "Quizzes" },
   { key: "flashcards", label: "Practice" },
   { key: "selfstudy", label: "Self-Study" },
+  { key: "browse", label: "Browse" },
 ];
 
 const MASTER_TABS = [
@@ -33,10 +35,12 @@ const MASTER_TABS = [
   { key: "content", label: "Content Library" },
   { key: "quizzes", label: "Quizzes" },
   { key: "rewards", label: "Rewards" },
+  { key: "browse", label: "Browse" },
   { key: "settings", label: "Settings" },
 ];
 
 let authUser = null;
+let isAdminAccount = false;
 let studentProfile = null; // {id, role:'student', ...} | null
 let masterProfile = null;  // {id, role:'master', ...} | null
 let activeRole = null;     // 'student' | 'master' | null
@@ -46,6 +50,7 @@ function lastRoleKey(uid) { return `zoo-it-citizenship:lastRole:${uid}`; }
 
 watchAuthUser(async (user) => {
   authUser = user;
+  isAdminAccount = false;
   studentProfile = null;
   masterProfile = null;
   activeRole = null;
@@ -58,12 +63,14 @@ watchAuthUser(async (user) => {
 async function loadProfilesFor(user) {
   renderConnecting();
   try {
-    const [sp, mp] = await Promise.all([
+    const [sp, mp, admin] = await Promise.all([
       getProfileOnce(studentProfileId(user.uid)),
       getProfileOnce(masterProfileId(user.uid)),
+      isAdminEmail(user.email),
     ]);
     studentProfile = sp;
     masterProfile = mp;
+    isAdminAccount = admin;
 
     const remembered = localStorage.getItem(lastRoleKey(user.uid));
     if (remembered === "student" && studentProfile) activeRole = "student";
@@ -126,6 +133,7 @@ async function handleChooseRole(role, username) {
     role,
     email: authUser.email,
     username,
+    isAdmin: isAdminAccount,
   });
   if (role === "student") studentProfile = profile; else masterProfile = profile;
   activeRole = role;
@@ -146,28 +154,33 @@ function renderShell() {
   const tabs = isMaster ? MASTER_TABS : STUDENT_TABS;
   const hasBothProfiles = !!studentProfile && !!masterProfile;
 
-  const roleSwitcher = hasBothProfiles
-    ? el("div", { class: "role-switch" }, [
-        el("button", {
-          class: `role-switch__pill ${!isMaster ? "role-switch__pill--active" : ""}`,
-          onclick: () => switchRole("student"),
-        }, "Studente"),
-        el("button", {
-          class: `role-switch__pill ${isMaster ? "role-switch__pill--active" : ""}`,
-          onclick: () => switchRole("master"),
-        }, "Maestro"),
-      ])
-    : el("button", {
-        class: "btn btn--ghost btn--sm",
-        onclick: () => {
-          renderRoleChoice(app, {
-            onChoose: handleChooseRole,
-            existingRole: activeRole,
-            existingUsername: (isMaster ? masterProfile : studentProfile)?.displayName,
-            uid: authUser.uid,
-          });
-        },
-      }, `+ Try as ${isMaster ? "Studente" : "Maestro"}`);
+  // Switching between student/master is an admin-only privilege — a
+  // regular account keeps whichever role it first chose.
+  let roleSwitcher = null;
+  if (isAdminAccount) {
+    roleSwitcher = hasBothProfiles
+      ? el("div", { class: "role-switch" }, [
+          el("button", {
+            class: `role-switch__pill ${!isMaster ? "role-switch__pill--active" : ""}`,
+            onclick: () => switchRole("student"),
+          }, "Studente"),
+          el("button", {
+            class: `role-switch__pill ${isMaster ? "role-switch__pill--active" : ""}`,
+            onclick: () => switchRole("master"),
+          }, "Maestro"),
+        ])
+      : el("button", {
+          class: "btn btn--ghost btn--sm",
+          onclick: () => {
+            renderRoleChoice(app, {
+              onChoose: handleChooseRole,
+              existingRole: activeRole,
+              existingUsername: (isMaster ? masterProfile : studentProfile)?.displayName,
+              uid: authUser.uid,
+            });
+          },
+        }, `+ Try as ${isMaster ? "Studente" : "Maestro"}`);
+  }
 
   const nav = el("nav", { class: "app-nav" }, [
     el("div", { class: "app-nav__top" }, [
@@ -175,7 +188,7 @@ function renderShell() {
         el("span", { class: "app-nav__emblem" }, "🛂"),
         el("div", {}, [
           el("span", { class: "app-nav__title" }, "Zoo's Italian Citizenship"),
-          el("span", { class: "app-nav__role" }, isMaster ? "Maestro" : "Studente"),
+          el("span", { class: "app-nav__role" }, (isMaster ? "Maestro" : "Studente") + (isAdminAccount ? " · Admin" : "")),
         ]),
       ]),
       el("div", { class: "app-nav__top-actions" }, [
@@ -212,16 +225,18 @@ function renderTab(main, isMaster) {
               role: "student",
               email: authUser.email,
               username: masterProfile.displayName,
+              isAdmin: isAdminAccount,
             });
           }
           await addProfileToRoster(mpId, studentProfile.id);
         },
       });
     }
-    if (activeTab === "content") return renderContentLibrary(main, mpId);
+    if (activeTab === "content") return renderContentLibrary(main, mpId, isAdminAccount);
     if (activeTab === "quizzes") return renderQuizBuilder(main, mpId);
-    if (activeTab === "rewards") return renderRewardsManager(main, mpId);
-    if (activeTab === "settings") return renderMasterSettings(main);
+    if (activeTab === "rewards") return renderRewardsManager(main, mpId, isAdminAccount);
+    if (activeTab === "browse") return renderBrowse(main, { viewerProfile: masterProfile });
+    if (activeTab === "settings") return renderMasterSettings(main, isAdminAccount);
   } else {
     const spId = studentProfile.id;
     if (activeTab === "dashboard") return renderStudentDashboard(main, spId);
@@ -233,8 +248,9 @@ function renderTab(main, isMaster) {
         });
       });
     }
-    if (activeTab === "flashcards") return renderFlashcards(main);
+    if (activeTab === "flashcards") return renderFlashcards(main, spId);
     if (activeTab === "selfstudy") return renderSelfStudy(main, spId);
+    if (activeTab === "browse") return renderBrowse(main, { viewerProfile: studentProfile });
   }
 }
 

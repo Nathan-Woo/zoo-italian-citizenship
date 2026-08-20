@@ -13,86 +13,106 @@ service cloud.firestore {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/profiles/$(request.auth.uid + '_master'));
     }
+    // Admin = the signed-in Google account's email has a doc in
+    // adminEmails. This is checked directly against a server-side
+    // collection every time, not a client-supplied field, so it can't
+    // be spoofed by editing a profile document.
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/adminEmails/$(request.auth.token.email.lower()));
+    }
 
-    // Allowlist gate. Checked AFTER Google sign-in (the app never reads
-    // this while signed out), so a plain isSignedIn() read is enough —
-    // this avoids the unauthenticated-read edge cases that can surface
-    // as a generic "client is offline" error in the Firestore SDK.
-    match /allowedEmails/{email} {
-      allow get: if isSignedIn();
+    // Admin allowlist — anyone can sign up and use the app; this only
+    // controls the elevated admin powers (multi-role switching, editing
+    // any master's content, pack point values, global point rates).
+    // A user can check their OWN admin status; nothing else is exposed.
+    match /adminEmails/{email} {
+      allow get: if isSignedIn() && email == request.auth.token.email.lower();
       allow list: if false;
-      allow write: if isMaster();
+      allow write: if isAdmin();
     }
 
     // One Google account (uid) can own up to two profiles:
-    // {uid}_student and {uid}_master — kept as fully separate "account
-    // files" so the same person can switch roles to test the app.
+    // {uid}_student and {uid}_master.
     match /profiles/{profileId} {
-      allow get: if ownsProfile(profileId) || isMaster();
-      // Any signed-in profile can query this collection — needed for:
-      // (a) checking username availability during onboarding, before
-      // the person has any profile of their own yet, and (b) a master
-      // looking up a student by username to add to their roster.
+      allow get: if ownsProfile(profileId) || isMaster() || isAdmin();
+      // Needed for: username-uniqueness checks pre-signup, a master
+      // looking up a student by username, and the Browse tab listing
+      // every master.
       allow list: if isSignedIn();
       allow create: if ownsProfile(profileId);
-      // A master needs to update a managed student's totalPoints when
-      // grading a quiz, and their own managedStudentIds when editing
-      // their roster — so isMaster() gets general update rights here.
-      allow update: if ownsProfile(profileId) || isMaster();
+      // Owner can edit their own profile (roster, included/hidden
+      // masters, etc). A master can also update a managed student's
+      // totalPoints when grading. Admins can edit any profile.
+      allow update: if ownsProfile(profileId) || isMaster() || isAdmin();
       allow delete: if false;
 
       match /pointsLog/{entryId} {
-        allow read: if ownsProfile(profileId) || isMaster();
-        allow create: if ownsProfile(profileId) || isMaster();
+        allow read: if ownsProfile(profileId) || isMaster() || isAdmin();
+        allow create: if ownsProfile(profileId) || isMaster() || isAdmin();
         allow update, delete: if false;
       }
 
       match /selfStudyLog/{dateKey} {
-        allow read: if ownsProfile(profileId) || isMaster();
+        allow read: if ownsProfile(profileId) || isMaster() || isAdmin();
         allow write: if ownsProfile(profileId);
       }
     }
 
-    // Content library — any signed-in profile can read (for practice/
-    // quizzes), only a master can write.
+    // Content library — every signed-in profile can read everything
+    // (Browse/community visibility is a client-side filter, not a
+    // security boundary, since sharing is the whole point). Only the
+    // owning master (createdBy) or an admin can write.
     match /content/{contentId} {
       allow read: if isSignedIn();
-      allow write: if isMaster();
+      allow create: if isMaster();
+      allow update, delete: if isMaster() &&
+        (resource.data.createdBy == request.auth.uid + '_master' || isAdmin());
     }
 
-    // Packs — named groupings of content items. Same access pattern as
-    // content itself.
+    // Packs — same ownership pattern as content, plus: pointValue is an
+    // admin-only field even for the pack's own owner.
     match /packs/{packId} {
       allow read: if isSignedIn();
-      allow write: if isMaster();
+      allow create: if isMaster();
+      allow update: if isMaster() &&
+        (resource.data.createdBy == request.auth.uid + '_master' || isAdmin()) &&
+        (isAdmin() || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['pointValue']));
+      allow delete: if isMaster() &&
+        (resource.data.createdBy == request.auth.uid + '_master' || isAdmin());
     }
 
     // Quizzes — any signed-in profile can read (students query by
-    // assignedTo array-contains their own profileId); only a master
-    // creates/edits/deletes.
+    // assignedTo array-contains their own profileId); only the owning
+    // master (or admin) creates/edits/deletes.
     match /quizzes/{quizId} {
       allow read: if isSignedIn();
-      allow create, update, delete: if isMaster();
+      allow create: if isMaster();
+      allow update, delete: if isMaster() &&
+        (resource.data.createdBy == request.auth.uid + '_master' || isAdmin());
 
       match /submissions/{studentProfileId} {
-        allow read: if ownsProfile(studentProfileId) || isMaster();
+        allow read: if ownsProfile(studentProfileId) || isMaster() || isAdmin();
         allow create: if ownsProfile(studentProfileId);
-        // Students can't edit after submitting; only a master grades.
-        allow update: if isMaster();
+        allow update: if isMaster() || isAdmin();
         allow delete: if false;
       }
     }
 
-    // Rewards — students read, masters manage.
+    // Rewards — any signed-in profile reads, masters manage their own,
+    // admins manage any.
     match /rewards/{rewardId} {
       allow read: if isSignedIn();
-      allow write: if isMaster();
+      allow create: if isMaster();
+      allow update, delete: if isMaster() &&
+        (resource.data.createdBy == request.auth.uid + '_master' || isAdmin());
     }
 
-    // App-wide settings (self-study point rules).
+    // App-wide settings (self-study point rules) — admin-only to write,
+    // matching "approved accounts set the global point values."
     match /settings/{docId} {
       allow read: if isSignedIn();
-      allow write: if isMaster();
+      allow write: if isAdmin();
     }
   }
 }

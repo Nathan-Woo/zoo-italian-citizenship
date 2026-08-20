@@ -1,23 +1,43 @@
 import { el, mount, toast, typeLabel } from "../dom.js";
-import { listenContent, listenPacks, getSelfStudySettings, getTodaysSelfStudyEarned, awardSelfStudyPoints } from "../db.js";
+import {
+  listenContent, listenPacks, listenManagingMasters, listenProfile,
+  getSelfStudySettings, getTodaysSelfStudyEarned, awardSelfStudyPoints,
+} from "../db.js";
 import { playButton } from "./audio-widget.js";
 import { isAnswerCorrect } from "../grading.js";
 
 const TYPES = ["vocab", "phrase", "sentence", "conjugation"];
 
+/** Builds the set of master profileIds this student can draw content
+ * from: whoever manages them (roster), plus anything they've opted
+ * into via Browse. Calls back whenever either source changes. */
+function watchSourceMasters(profileId, callback) {
+  let managing = new Set();
+  let included = new Set();
+  const emit = () => callback(new Set([...managing, ...included]));
+  const un1 = listenManagingMasters(profileId, (list) => { managing = new Set(list.map((m) => m.id)); emit(); });
+  const un2 = listenProfile(profileId, (p) => { included = new Set(p?.includedMasterIds || []); emit(); });
+  return () => { un1(); un2(); };
+}
+
 /* ── Flashcards ───────────────────────────────────────────────────── */
 
-export function renderFlashcards(container) {
+export function renderFlashcards(container, profileId) {
   let activeType = "vocab";
   let items = [];
+  let sourceMasterIds = new Set();
+  let selectedSource = "all";
   let index = 0;
   let flipped = false;
-  let unsubscribe = null;
+  let unsubscribeContent = null;
+
+  watchSourceMasters(profileId, (ids) => { sourceMasterIds = ids; subscribe(); });
 
   function subscribe() {
-    if (unsubscribe) unsubscribe();
-    unsubscribe = listenContent((list) => {
-      items = list;
+    if (unsubscribeContent) unsubscribeContent();
+    unsubscribeContent = listenContent((list) => {
+      items = list.filter((c) => sourceMasterIds.has(c.createdBy));
+      if (selectedSource !== "all") items = items.filter((c) => c.createdBy === selectedSource);
       index = 0;
       flipped = false;
       draw();
@@ -36,7 +56,7 @@ export function renderFlashcards(container) {
     if (!items.length) {
       cardArea = el("div", { class: "empty-state" }, [
         el("p", {}, `No ${typeLabel(activeType).toLowerCase()} entries yet.`),
-        el("p", { class: "muted" }, "Ask your maestro to add some in the Content Library."),
+        el("p", { class: "muted" }, "Your teacher hasn't added any yet, or try including more sources in Browse."),
       ]);
     } else {
       const item = items[index];
@@ -70,8 +90,6 @@ export function renderFlashcards(container) {
       cardArea,
     ]));
   }
-
-  subscribe();
 }
 
 /* ── Self-study mini-quiz ─────────────────────────────────────────── */
@@ -79,24 +97,37 @@ export function renderFlashcards(container) {
 export function renderSelfStudy(container, profileId) {
   let allContent = [];
   let packs = [];
+  let sourceMasterIds = new Set();
   let selectedTypes = new Set(TYPES);
   let selectedPackId = "all";
+  let selectedSource = "all";
   let count = 10;
-  let session = null; // { items, answers }
+  let session = null;
   let settings = null;
   let earnedToday = 0;
 
   async function init() {
     settings = await getSelfStudySettings();
     earnedToday = await getTodaysSelfStudyEarned(profileId);
+    watchSourceMasters(profileId, (ids) => { sourceMasterIds = ids; drawSetup(); });
     listenPacks((list) => { packs = list; drawSetup(); });
     listenContent((list) => { allContent = list; drawSetup(); });
   }
 
+  function availablePacks() {
+    return packs.filter((p) => sourceMasterIds.has(p.createdBy));
+  }
+
+  function pool() {
+    let p = allContent.filter((c) => sourceMasterIds.has(c.createdBy) && selectedTypes.has(c.type));
+    if (selectedPackId !== "all") p = p.filter((c) => (c.packIds || []).includes(selectedPackId));
+    if (selectedSource !== "all") p = p.filter((c) => c.createdBy === selectedSource);
+    return p;
+  }
+
   function drawSetup() {
-    let pool = allContent.filter((c) => selectedTypes.has(c.type));
-    if (selectedPackId !== "all") pool = pool.filter((c) => (c.packIds || []).includes(selectedPackId));
-    const maxCount = Math.min(30, pool.length);
+    const currentPool = pool();
+    const maxCount = Math.min(30, currentPool.length);
 
     const typeToggles = el("div", { class: "chip-row" }, TYPES.map((t) =>
       el("button", {
@@ -110,17 +141,33 @@ export function renderSelfStudy(container, profileId) {
       }, typeLabel(t))
     ));
 
-    const packToggles = packs.length
-      ? el("div", { class: "chip-row" }, ["all", ...packs.map((p) => p.id)].map((pid) =>
+    const avPacks = availablePacks();
+    const packToggles = avPacks.length
+      ? el("div", { class: "chip-row" }, ["all", ...avPacks.map((p) => p.id)].map((pid) =>
           el("button", {
             class: `chip ${selectedPackId === pid ? "chip--active" : ""}`,
             type: "button",
             onclick: () => { selectedPackId = pid; drawSetup(); },
-          }, pid === "all" ? "All packs" : packs.find((p) => p.id === pid).name)
+          }, pid === "all" ? "All packs" : `${avPacks.find((p) => p.id === pid).name}${avPacks.find((p) => p.id === pid).pointValue ? ` (+${avPacks.find((p) => p.id === pid).pointValue} perfect)` : ""}`)
+        ))
+      : null;
+
+    const sourceMasters = [...sourceMasterIds];
+    const sourceContentByMaster = {};
+    sourceMasters.forEach((mid) => { sourceContentByMaster[mid] = allContent.filter((c) => c.createdBy === mid).length; });
+
+    const sourceToggles = sourceMasters.length > 1
+      ? el("div", { class: "chip-row" }, ["all", ...sourceMasters].map((mid) =>
+          el("button", {
+            class: `chip ${selectedSource === mid ? "chip--active" : ""}`,
+            type: "button",
+            onclick: () => { selectedSource = mid; drawSetup(); },
+          }, mid === "all" ? "All sources" : `Source (${sourceContentByMaster[mid] || 0})`)
         ))
       : null;
 
     const remaining = Math.max(0, settings.dailyMaxPoints - earnedToday);
+    const selectedPack = selectedPackId !== "all" ? avPacks.find((p) => p.id === selectedPackId) : null;
 
     mount(container, el("div", { class: "view" }, [
       el("h2", { class: "view-title" }, "Self-Study"),
@@ -131,19 +178,16 @@ export function renderSelfStudy(container, profileId) {
         ]),
       ]),
       el("div", { class: "panel" }, [
-        el("label", { class: "field" }, [
-          el("span", {}, "Categories"),
-          typeToggles,
-        ]),
-        packToggles
-          ? el("label", { class: "field" }, [el("span", {}, "Pack"), packToggles])
+        el("label", { class: "field" }, [el("span", {}, "Categories"), typeToggles]),
+        packToggles ? el("label", { class: "field" }, [el("span", {}, "Pack"), packToggles]) : null,
+        sourceToggles ? el("label", { class: "field" }, [el("span", {}, "Source"), sourceToggles]) : null,
+        selectedPack?.pointValue
+          ? el("p", { class: "muted small" }, `Get every question right in this round and you'll earn a +${selectedPack.pointValue} point bonus, on top of normal per-question points.`)
           : null,
         el("label", { class: "field" }, [
           el("span", {}, `Number of questions (up to ${maxCount || 0} available)`),
           el("input", {
-            type: "number",
-            min: "1",
-            max: String(maxCount || 1),
+            type: "number", min: "1", max: String(maxCount || 1),
             value: String(Math.min(count, maxCount || 1)),
             oninput: (e) => { count = Number(e.target.value); },
           }),
@@ -153,21 +197,21 @@ export function renderSelfStudy(container, profileId) {
           : null,
         el("button", {
           class: "btn btn--primary",
-          disabled: !pool.length,
-          onclick: () => startSession(pool),
-        }, pool.length ? "Start practice" : "No content available yet"),
+          disabled: !currentPool.length,
+          onclick: () => startSession(currentPool, selectedPack),
+        }, currentPool.length ? "Start practice" : "No content available yet"),
       ]),
     ]));
   }
 
-  function startSession(pool) {
-    const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.max(1, count));
+  function startSession(poolItems, scopedPack) {
+    const shuffled = [...poolItems].sort(() => Math.random() - 0.5).slice(0, Math.max(1, count));
+    const distinctMasters = new Set(shuffled.map((c) => c.createdBy)).size;
     session = {
-      items: shuffled.map((c) => ({
-        content: c,
-        direction: Math.random() < 0.5 ? "it-en" : "en-it",
-      })),
+      items: shuffled.map((c) => ({ content: c, direction: Math.random() < 0.5 ? "it-en" : "en-it" })),
       answers: new Array(shuffled.length).fill(""),
+      scopedPack,
+      isMultiSource: distinctMasters > 1,
     };
     drawSession();
   }
@@ -182,8 +226,7 @@ export function renderSelfStudy(container, profileId) {
           el("strong", {}, promptText),
         ]),
         el("input", {
-          type: "text",
-          placeholder: `Type the ${targetLang.toLowerCase()}…`,
+          type: "text", placeholder: `Type the ${targetLang.toLowerCase()}…`,
           oninput: (e) => { session.answers[i] = e.target.value; },
         }),
       ]);
@@ -205,13 +248,21 @@ export function renderSelfStudy(container, profileId) {
       return { ...it, given: session.answers[i], correctAnswer, ok };
     });
 
-    const rawPoints = correctCount * (settings.pointsPerCorrect || 1);
+    const perQuestionRate = session.isMultiSource ? settings.pointsPerCorrectMultiSource : settings.pointsPerCorrectSingleSource;
+    const rawPoints = correctCount * (perQuestionRate || 1);
     const awarded = await awardSelfStudyPoints(profileId, rawPoints);
     earnedToday += awarded;
 
+    let bonusAwarded = 0;
+    const isPerfect = correctCount === results.length && results.length > 0;
+    if (isPerfect && session.scopedPack?.pointValue) {
+      bonusAwarded = await awardSelfStudyPoints(profileId, session.scopedPack.pointValue);
+      earnedToday += bonusAwarded;
+    }
+
     mount(container, el("div", { class: "view" }, [
       el("h2", { class: "view-title" }, "Results"),
-      el("p", { class: "results-summary" }, `${correctCount} / ${results.length} correct — +${awarded} point${awarded === 1 ? "" : "s"} earned${awarded < rawPoints ? " (daily cap reached)" : ""}`),
+      el("p", { class: "results-summary" }, `${correctCount} / ${results.length} correct — +${awarded} point${awarded === 1 ? "" : "s"} earned${bonusAwarded ? `, +${bonusAwarded} perfect-pack bonus!` : ""}${awarded < rawPoints ? " (daily cap reached)" : ""}`),
       el("div", { class: "panel" }, results.map((r) =>
         el("div", { class: `quiz-item quiz-item--${r.ok ? "ok" : "no"}` }, [
           el("div", {}, [

@@ -1,11 +1,12 @@
 import { el, mount, toast, fmtDate, typeLabel, stampBadge } from "../dom.js";
 import {
-  listenContent, addContent, updateContent, deleteContent,
-  listenPacks, addPack, deletePack,
+  listenContent, addContent, updateContent, deleteContent, canEdit,
+  listenPacks, addPack, deletePack, setPackPointValue,
   listenQuizzes, createQuiz, deleteQuiz,
   listenAllSubmissionsForQuiz, gradeSubmission,
   listenRoster, addStudentToRosterByUsername, removeStudentFromRoster,
   listenRewards, addReward, deleteReward,
+  listenProfile,
   getSelfStudySettings, updateSelfStudySettings,
 } from "../db.js";
 import { createRecorderWidget, playButton } from "./audio-widget.js";
@@ -55,9 +56,7 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
       ]),
       el("div", { class: "list" }, roster.length
         ? roster.map((s) => el("div", { class: "list-row" }, [
-            el("div", {}, [
-              el("strong", {}, s.displayName || s.email),
-            ]),
+            el("div", {}, [el("strong", {}, s.displayName || s.email)]),
             el("div", { class: "row-actions" }, [
               el("span", { class: "hero-strip__number hero-strip__number--sm" }, String(s.totalPoints || 0)),
               el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: async () => { await removeStudentFromRoster(masterProfileId, s.id); toast("Removed from roster.", "info"); } }, "Remove"),
@@ -69,10 +68,15 @@ export function renderMasterDashboard(container, { masterProfileId, hasOwnStuden
 }
 
 /* ── Content Library ──────────────────────────────────────────────── */
+// Shows this master's OWN content (full CRUD). Admins see and can edit
+// everyone's content, with an owner badge on each item. Other masters'
+// content is discovered/included via the Browse tab, and becomes usable
+// in the Quiz Builder and student Practice/Self-Study pools from there.
 
-export function renderContentLibrary(container, masterProfileId) {
+export function renderContentLibrary(container, masterProfileId, isAdmin) {
   let items = [];
   let packs = [];
+  let allMasterNames = {}; // masterProfileId -> displayName, for admin view badges
   let filterType = "all";
   let filterPack = "all";
   let editing = null;
@@ -84,9 +88,16 @@ export function renderContentLibrary(container, masterProfileId) {
   listenContent((list) => { items = list; draw(); });
   listenPacks((list) => { packs = list; draw(); });
 
+  function ownPacks(ownerId) {
+    return packs.filter((p) => p.createdBy === ownerId);
+  }
+
   function draw() {
-    let filtered = filterType === "all" ? items : items.filter((i) => i.type === filterType);
+    const scoped = isAdmin ? items : items.filter((i) => i.createdBy === masterProfileId);
+    let filtered = filterType === "all" ? scoped : scoped.filter((i) => i.type === filterType);
     if (filterPack !== "all") filtered = filtered.filter((i) => (i.packIds || []).includes(filterPack));
+
+    const visiblePacks = isAdmin ? packs : ownPacks(masterProfileId);
 
     const typeTabs = el("div", { class: "tabbar" }, ["all", ...TYPES].map((t) =>
       el("button", {
@@ -95,12 +106,12 @@ export function renderContentLibrary(container, masterProfileId) {
       }, t === "all" ? "All types" : typeLabel(t))
     ));
 
-    const packTabs = packs.length
-      ? el("div", { class: "tabbar tabbar--sm" }, ["all", ...packs.map((p) => p.id)].map((pid) =>
+    const packTabs = visiblePacks.length
+      ? el("div", { class: "tabbar tabbar--sm" }, ["all", ...visiblePacks.map((p) => p.id)].map((pid) =>
           el("button", {
             class: `tab ${filterPack === pid ? "tab--active" : ""}`,
             onclick: () => { filterPack = pid; draw(); },
-          }, pid === "all" ? "All packs" : packs.find((p) => p.id === pid).name)
+          }, pid === "all" ? "All packs" : visiblePacks.find((p) => p.id === pid).name)
         ))
       : null;
 
@@ -110,6 +121,9 @@ export function renderContentLibrary(container, masterProfileId) {
             el("span", { class: "chip chip--static" }, typeLabel(item.type)),
             el("strong", {}, ` ${item.italian} `),
             el("span", { class: "muted" }, `→ ${item.english}`),
+            isAdmin && item.createdBy !== masterProfileId
+              ? el("div", { class: "muted small" }, `Owner: ${allMasterNames[item.createdBy] || item.createdBy}`)
+              : null,
             item.hint ? el("div", { class: "muted small" }, `Hint: ${item.hint}`) : null,
             (item.packIds || []).length
               ? el("div", { class: "muted small" }, `Packs: ${item.packIds.map((pid) => packs.find((p) => p.id === pid)?.name).filter(Boolean).join(", ")}`)
@@ -117,22 +131,26 @@ export function renderContentLibrary(container, masterProfileId) {
           ]),
           el("div", { class: "row-actions" }, [
             item.audioURL ? playButton(item.audioURL) : el("span", { class: "muted small" }, "No audio"),
-            el("button", { class: "btn btn--ghost btn--sm", onclick: () => { editing = item; removeAudioFlag = false; editingPackIds = new Set(item.packIds || []); draw(); } }, "Edit"),
-            el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: () => handleDelete(item) }, "Delete"),
+            canEdit(item, masterProfileId, isAdmin)
+              ? el("button", { class: "btn btn--ghost btn--sm", onclick: () => { editing = item; removeAudioFlag = false; editingPackIds = new Set(item.packIds || []); draw(); } }, "Edit")
+              : null,
+            canEdit(item, masterProfileId, isAdmin)
+              ? el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: () => handleDelete(item) }, "Delete")
+              : null,
           ]),
         ]))
       : [el("p", { class: "muted" }, "Nothing here yet.")]);
 
     mount(container, el("div", { class: "view" }, [
       el("div", { class: "panel__head" }, [
-        el("h2", { class: "view-title" }, "Content Library"),
+        el("h2", { class: "view-title" }, isAdmin ? "Content Library (all masters)" : "Content Library"),
         el("div", { class: "row-actions" }, [
           el("button", { class: "btn btn--ghost btn--sm", onclick: () => { showPacksPanel = !showPacksPanel; draw(); } }, showPacksPanel ? "Hide packs" : "Manage packs"),
           el("button", { class: "btn btn--ghost btn--sm", onclick: () => { showSuggestPanel = !showSuggestPanel; draw(); } }, "✨ Suggest for me"),
           el("button", { class: "btn btn--primary btn--sm", onclick: () => { editing = {}; removeAudioFlag = false; editingPackIds = new Set(); draw(); } }, "+ Add entry"),
         ]),
       ]),
-      showPacksPanel ? renderPacksPanel() : null,
+      showPacksPanel ? renderPacksPanel(visiblePacks) : null,
       showSuggestPanel ? renderSuggestPanel() : null,
       typeTabs,
       packTabs,
@@ -141,7 +159,7 @@ export function renderContentLibrary(container, masterProfileId) {
     ]));
   }
 
-  function renderPacksPanel() {
+  function renderPacksPanel(visiblePacks) {
     const nameInput = el("input", { type: "text", placeholder: "e.g. Restaurant vocab, Chapter 3" });
     const addBtn = el("button", { class: "btn btn--primary btn--sm", type: "button" }, "+ Create pack");
     addBtn.addEventListener("click", async () => {
@@ -156,21 +174,39 @@ export function renderContentLibrary(container, masterProfileId) {
       el("h3", {}, "Packs"),
       el("p", { class: "muted small" }, "Group related content so students and quizzes can pull in a whole set at once."),
       el("div", { class: "row-actions" }, [nameInput, addBtn]),
-      el("div", { class: "list" }, packs.length
-        ? packs.map((p) => el("div", { class: "list-row" }, [
-            el("div", {}, [
-              el("strong", {}, p.name),
-              el("p", { class: "muted small" }, `${items.filter((i) => (i.packIds || []).includes(p.id)).length} items`),
-            ]),
-            el("button", {
-              class: "btn btn--ghost btn--sm btn--danger",
-              onclick: async () => {
-                if (!confirm(`Delete pack "${p.name}"? Items stay in the library, just ungrouped.`)) return;
-                await deletePack(p.id);
-                toast("Pack deleted.", "info");
-              },
-            }, "Delete"),
-          ]))
+      el("div", { class: "list" }, visiblePacks.length
+        ? visiblePacks.map((p) => {
+            const canEditPack = p.createdBy === masterProfileId || isAdmin;
+            const pointInput = el("input", { type: "number", min: "0", placeholder: "e.g. 25", value: p.pointValue ?? "", style: "width:80px" });
+            return el("div", { class: "list-row" }, [
+              el("div", {}, [
+                el("strong", {}, p.name),
+                el("p", { class: "muted small" }, `${items.filter((i) => (i.packIds || []).includes(p.id)).length} items`),
+              ]),
+              el("div", { class: "row-actions" }, [
+                isAdmin
+                  ? el("label", { class: "field field--inline" }, [
+                      el("span", { class: "small" }, "Perfect-round bonus"),
+                      pointInput,
+                      el("button", {
+                        class: "btn btn--ghost btn--sm", type: "button",
+                        onclick: async () => { await setPackPointValue(p.id, pointInput.value); toast("Pack point value saved.", "success"); },
+                      }, "Save"),
+                    ])
+                  : (p.pointValue ? el("span", { class: "chip chip--static" }, `+${p.pointValue} pt perfect bonus`) : null),
+                canEditPack
+                  ? el("button", {
+                      class: "btn btn--ghost btn--sm btn--danger",
+                      onclick: async () => {
+                        if (!confirm(`Delete pack "${p.name}"? Items stay in the library, just ungrouped.`)) return;
+                        await deletePack(p.id);
+                        toast("Pack deleted.", "info");
+                      },
+                    }, "Delete")
+                  : null,
+              ]),
+            ]);
+          })
         : [el("p", { class: "muted" }, "No packs yet.")]),
     ]);
   }
@@ -263,10 +299,11 @@ export function renderContentLibrary(container, masterProfileId) {
 
   function renderEditor() {
     const isNew = !editing.id;
+    const ownerId = isNew ? masterProfileId : editing.createdBy;
     let recorderWidget = null;
 
-    const packChips = el("div", { class: "chip-row" }, packs.length
-      ? packs.map((p) => el("button", {
+    const packChips = el("div", { class: "chip-row" }, ownPacks(ownerId).length
+      ? ownPacks(ownerId).map((p) => el("button", {
           type: "button",
           class: `chip ${editingPackIds.has(p.id) ? "chip--active" : ""}`,
           onclick: (e) => {
@@ -300,10 +337,7 @@ export function renderContentLibrary(container, masterProfileId) {
         el("span", {}, "Group/tag (optional — e.g. 'essere' for a conjugation set)"),
         el("input", { name: "tags", value: editing.tags || "" }),
       ]),
-      el("div", { class: "field" }, [
-        el("span", {}, "Packs"),
-        packChips,
-      ]),
+      el("div", { class: "field" }, [el("span", {}, "Packs"), packChips]),
       el("div", { class: "field" }, [
         el("span", {}, "Voice recording (Italian pronunciation)"),
         editing.audioURL && !removeAudioFlag
@@ -329,7 +363,7 @@ export function renderContentLibrary(container, masterProfileId) {
         hint: fd.get("hint").trim() || null,
         tags: fd.get("tags").trim() || null,
         packIds: [...editingPackIds],
-        createdBy: masterProfileId,
+        createdBy: ownerId,
       };
       try {
         let id = editing.id;
@@ -368,6 +402,7 @@ export function renderQuizBuilder(container, masterProfileId) {
   let roster = [];
   let content = [];
   let packs = [];
+  let myProfile = null; // for includedMasterIds
   let building = false;
   let draftItems = [];
   let selectedStudentIds = new Set();
@@ -376,6 +411,15 @@ export function renderQuizBuilder(container, masterProfileId) {
   listenRoster(masterProfileId, (r) => { roster = r; draw(); });
   listenContent((c) => { content = c; draw(); });
   listenPacks((p) => { packs = p; draw(); });
+  listenProfile(masterProfileId, (p) => { myProfile = p; draw(); });
+
+  function usablePool() {
+    const includeSet = new Set([masterProfileId, ...(myProfile?.includedMasterIds || [])]);
+    return {
+      content: content.filter((c) => includeSet.has(c.createdBy)),
+      packs: packs.filter((p) => includeSet.has(p.createdBy)),
+    };
+  }
 
   function draw() {
     const quizzes = rawQuizzes.filter((quiz) => quiz.createdBy === masterProfileId);
@@ -408,6 +452,7 @@ export function renderQuizBuilder(container, masterProfileId) {
       ]);
     }
 
+    const pool = usablePool();
     const itemsHost = el("div", { class: "list" });
 
     function drawItems() {
@@ -421,29 +466,19 @@ export function renderQuizBuilder(container, masterProfileId) {
       mount(itemsHost, el("div", {}, rows.length ? rows : [el("p", { class: "muted" }, "No items added yet.")]));
     }
 
-    // Compact search-to-add content picker, replacing a giant <select>.
     const searchSelect = createSearchSelect({
-      items: content.map((c) => ({
+      items: pool.content.map((c) => ({
         id: c.id,
         label: `${c.italian} / ${c.english}`,
-        sublabel: typeLabel(c.type) + (c.audioURL ? " · has audio" : ""),
+        sublabel: typeLabel(c.type) + (c.audioURL ? " · has audio" : "") + (c.createdBy !== masterProfileId ? " · included" : ""),
       })),
-      placeholder: "Type to search content…",
+      placeholder: "Type to search content (yours + included)…",
     });
 
-    // Four compact tap-to-cycle controls instead of four stacked <select>s.
-    const promptLangToggle = createMiniToggle({
-      label: "PROMPT", options: [{ value: "it", display: "IT" }, { value: "en", display: "EN" }], value: "it",
-    });
-    const promptModeToggle = createMiniToggle({
-      label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text",
-    });
-    const responseLangToggle = createMiniToggle({
-      label: "REPLY", options: [{ value: "en", display: "EN" }, { value: "it", display: "IT" }], value: "en",
-    });
-    const responseModeToggle = createMiniToggle({
-      label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text",
-    });
+    const promptLangToggle = createMiniToggle({ label: "PROMPT", options: [{ value: "it", display: "IT" }, { value: "en", display: "EN" }], value: "it" });
+    const promptModeToggle = createMiniToggle({ label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text" });
+    const responseLangToggle = createMiniToggle({ label: "REPLY", options: [{ value: "en", display: "EN" }, { value: "it", display: "IT" }], value: "en" });
+    const responseModeToggle = createMiniToggle({ label: "AS", options: [{ value: "text", display: "Typed" }, { value: "audio", display: "🎙 Rec" }], value: "text" });
     const pointsInput = el("input", { type: "number", value: "5", min: "1", class: "mini-points" });
 
     const toggleRow = el("div", { class: "mini-toggle-row" }, [
@@ -454,61 +489,48 @@ export function renderQuizBuilder(container, masterProfileId) {
       const promptMode = opts.promptMode;
       let promptText = null, promptAudioURL = null;
       if (promptMode === "audio") {
-        if (!c.audioURL) return null; // caller decides whether to skip or warn
+        if (!c.audioURL) return null;
         promptAudioURL = c.audioURL;
       } else {
         promptText = opts.promptLang === "it" ? c.italian : c.english;
       }
       return {
-        contentId: c.id,
-        promptLang: opts.promptLang,
-        responseLang: opts.responseLang,
-        promptMode,
-        promptText,
-        promptAudioURL,
-        responseMode: opts.responseMode,
-        points: opts.points,
+        contentId: c.id, promptLang: opts.promptLang, responseLang: opts.responseLang,
+        promptMode, promptText, promptAudioURL, responseMode: opts.responseMode, points: opts.points,
       };
     }
 
     const addItemBtn = el("button", { type: "button", class: "btn btn--ghost btn--sm" }, "+ Add item");
     addItemBtn.addEventListener("click", () => {
       const contentId = searchSelect.getSelectedId();
-      const c = content.find((x) => x.id === contentId);
+      const c = pool.content.find((x) => x.id === contentId);
       if (!c) { toast("Search and pick a content item first.", "error"); return; }
       const opts = {
-        promptLang: promptLangToggle.getValue(),
-        promptMode: promptModeToggle.getValue(),
-        responseLang: responseLangToggle.getValue(),
-        responseMode: responseModeToggle.getValue(),
+        promptLang: promptLangToggle.getValue(), promptMode: promptModeToggle.getValue(),
+        responseLang: responseLangToggle.getValue(), responseMode: responseModeToggle.getValue(),
         points: Number(pointsInput.value) || 1,
       };
       const item = buildItemFromContent(c, opts);
-      if (!item) {
-        toast(`"${c.italian}" has no recording — add one in the Content Library first, or switch to Typed.`, "error");
-        return;
-      }
+      if (!item) { toast(`"${c.italian}" has no recording — add one in the Content Library first, or switch to Typed.`, "error"); return; }
       draftItems.push(item);
       searchSelect.clear();
       drawItems();
     });
 
     const packSelect = el("select", {}, [
-      el("option", { value: "" }, packs.length ? "Choose a pack…" : "No packs yet"),
-      ...packs.map((p) => el("option", { value: p.id }, `${p.name} (${content.filter((c) => (c.packIds || []).includes(p.id)).length})`)),
+      el("option", { value: "" }, pool.packs.length ? "Choose a pack…" : "No packs available"),
+      ...pool.packs.map((p) => el("option", { value: p.id }, `${p.name} (${pool.content.filter((c) => (c.packIds || []).includes(p.id)).length})${p.createdBy !== masterProfileId ? " · included" : ""}`)),
     ]);
     const addPackBtn = el("button", { type: "button", class: "btn btn--ghost btn--sm" }, "+ Add entire pack");
     addPackBtn.addEventListener("click", () => {
       const packId = packSelect.value;
       if (!packId) { toast("Choose a pack first.", "error"); return; }
       const opts = {
-        promptLang: promptLangToggle.getValue(),
-        promptMode: promptModeToggle.getValue(),
-        responseLang: responseLangToggle.getValue(),
-        responseMode: responseModeToggle.getValue(),
+        promptLang: promptLangToggle.getValue(), promptMode: promptModeToggle.getValue(),
+        responseLang: responseLangToggle.getValue(), responseMode: responseModeToggle.getValue(),
         points: Number(pointsInput.value) || 1,
       };
-      const packContent = content.filter((c) => (c.packIds || []).includes(packId));
+      const packContent = pool.content.filter((c) => (c.packIds || []).includes(packId));
       let added = 0, skipped = 0;
       packContent.forEach((c) => {
         const item = buildItemFromContent(c, opts);
@@ -537,10 +559,8 @@ export function renderQuizBuilder(container, masterProfileId) {
       if (!draftItems.length) { toast("Add at least one item.", "error"); return; }
       if (!selectedStudentIds.size) { toast("Select at least one student.", "error"); return; }
       await createQuiz({
-        title: titleInput.value.trim(),
-        assignedTo: [...selectedStudentIds],
-        items: draftItems,
-        createdBy: masterProfileId,
+        title: titleInput.value.trim(), assignedTo: [...selectedStudentIds],
+        items: draftItems, createdBy: masterProfileId,
       });
       toast("Quiz created!", "success");
       building = false;
@@ -554,15 +574,12 @@ export function renderQuizBuilder(container, masterProfileId) {
       el("h3", {}, "Build a quiz"),
       el("label", { class: "field" }, [el("span", {}, "Title"), titleInput]),
       el("label", { class: "field" }, [el("span", {}, "Assign to"), studentChecks]),
-
       el("label", { class: "field" }, [el("span", {}, "Find content"), searchSelect.node]),
       toggleRow,
       el("label", { class: "field field--inline" }, [el("span", {}, "Points"), pointsInput]),
       addItemBtn,
-
       el("div", { class: "pack-add-row" }, [packSelect, addPackBtn]),
-      el("p", { class: "muted small" }, "Adding a pack uses the same Prompt/Reply settings above for every item in it."),
-
+      el("p", { class: "muted small" }, "Adding a pack uses the same Prompt/Reply settings above for every item in it. Pool includes your own content plus anything you've included from Browse."),
       el("h4", {}, "Items in this quiz"),
       itemsHost,
       el("div", { class: "row-actions" }, [
@@ -604,9 +621,7 @@ export function renderQuizBuilder(container, masterProfileId) {
         ]),
         el("div", { class: "grade-row__answer" }, [
           el("span", { class: "muted small" }, "Student answer:"),
-          item.responseMode === "audio"
-            ? playButton(ans.responseAudioURL, "▶ Response")
-            : el("strong", {}, ans.responseText || "(blank)"),
+          item.responseMode === "audio" ? playButton(ans.responseAudioURL, "▶ Response") : el("strong", {}, ans.responseText || "(blank)"),
         ]),
         el("label", { class: "grade-toggle" }, [
           el("input", { type: "checkbox", checked: true, onchange: (e) => { marks[i] = e.target.checked; } }),
@@ -617,9 +632,7 @@ export function renderQuizBuilder(container, masterProfileId) {
 
     const submitBtn = el("button", { class: "btn btn--primary btn--sm", type: "button" }, "Save grades");
     submitBtn.addEventListener("click", async () => {
-      const grading = quiz.items.map((item, i) => ({
-        itemIndex: i, correct: marks[i], pointsAwarded: marks[i] ? item.points : 0,
-      }));
+      const grading = quiz.items.map((item, i) => ({ itemIndex: i, correct: marks[i], pointsAwarded: marks[i] ? item.points : 0 }));
       const total = grading.reduce((s, g) => s + g.pointsAwarded, 0);
       await gradeSubmission(quiz.id, sub.id, grading, total);
       toast(`Graded — ${total} pts awarded.`, "success");
@@ -635,17 +648,20 @@ export function renderQuizBuilder(container, masterProfileId) {
 
 /* ── Rewards management ───────────────────────────────────────────── */
 
-export function renderRewardsManager(container, masterProfileId) {
+export function renderRewardsManager(container, masterProfileId, isAdmin) {
   let rewards = [];
   listenRewards((r) => { rewards = r; draw(); });
 
   function draw() {
-    const list = el("div", { class: "list" }, rewards.length ? rewards.map((r) => el("div", { class: "list-row" }, [
+    const scoped = isAdmin ? rewards : rewards.filter((r) => r.createdBy === masterProfileId);
+    const list = el("div", { class: "list" }, scoped.length ? scoped.map((r) => el("div", { class: "list-row" }, [
       el("div", {}, [
         el("strong", {}, `${r.title} — ${r.pointThreshold} pts`),
         r.description ? el("p", { class: "muted" }, r.description) : null,
       ]),
-      el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: async () => { await deleteReward(r.id); toast("Removed.", "info"); } }, "Delete"),
+      (r.createdBy === masterProfileId || isAdmin)
+        ? el("button", { class: "btn btn--ghost btn--sm btn--danger", onclick: async () => { await deleteReward(r.id); toast("Removed.", "info"); } }, "Delete")
+        : null,
     ])) : [el("p", { class: "muted" }, "No rewards set yet.")]);
 
     const form = el("form", { class: "editor-card", onsubmit: handleAdd }, [
@@ -677,28 +693,38 @@ export function renderRewardsManager(container, masterProfileId) {
   }
 }
 
-/* ── Settings: self-study caps ────────────────────────────────────── */
+/* ── Settings: self-study caps (admin-only to edit) ──────────────── */
 
-export function renderMasterSettings(container) {
+export function renderMasterSettings(container, isAdmin) {
   getSelfStudySettings().then((settings) => {
-    const form = el("form", { class: "editor-card", onsubmit: handleSave }, [
-      el("h3", {}, "Self-study point rules"),
+    const fields = [
       el("label", { class: "field" }, [
-        el("span", {}, "Points per correct self-study answer"),
-        el("input", { name: "pointsPerCorrect", type: "number", min: "1", value: settings.pointsPerCorrect }),
+        el("span", {}, "Points per correct — single-source round"),
+        el("input", { name: "pointsPerCorrectSingleSource", type: "number", min: "0", value: settings.pointsPerCorrectSingleSource, disabled: !isAdmin }),
+      ]),
+      el("label", { class: "field" }, [
+        el("span", {}, "Points per correct — multi-source round (mixing masters)"),
+        el("input", { name: "pointsPerCorrectMultiSource", type: "number", min: "0", value: settings.pointsPerCorrectMultiSource, disabled: !isAdmin }),
       ]),
       el("label", { class: "field" }, [
         el("span", {}, "Maximum self-study points per day"),
-        el("input", { name: "dailyMaxPoints", type: "number", min: "1", value: settings.dailyMaxPoints }),
+        el("input", { name: "dailyMaxPoints", type: "number", min: "1", value: settings.dailyMaxPoints, disabled: !isAdmin }),
       ]),
-      el("button", { class: "btn btn--primary", type: "submit" }, "Save settings"),
+    ];
+
+    const form = el("form", { class: "editor-card", onsubmit: handleSave }, [
+      el("h3", {}, "Self-study point rules"),
+      !isAdmin ? el("p", { class: "muted small" }, "These are set by an admin account — you can see the current values here.") : null,
+      ...fields,
+      isAdmin ? el("button", { class: "btn btn--primary", type: "submit" }, "Save settings") : null,
     ]);
 
     async function handleSave(e) {
       e.preventDefault();
       const fd = new FormData(form);
       await updateSelfStudySettings({
-        pointsPerCorrect: Number(fd.get("pointsPerCorrect")),
+        pointsPerCorrectSingleSource: Number(fd.get("pointsPerCorrectSingleSource")),
+        pointsPerCorrectMultiSource: Number(fd.get("pointsPerCorrectMultiSource")),
         dailyMaxPoints: Number(fd.get("dailyMaxPoints")),
       });
       toast("Settings saved.", "success");
@@ -708,8 +734,8 @@ export function renderMasterSettings(container) {
       el("h2", { class: "view-title" }, "Settings"),
       form,
       el("div", { class: "panel" }, [
-        el("h3", {}, "Approve new sign-ups"),
-        el("p", { class: "muted" }, "To let someone sign in with Google, add a document to the allowedEmails collection in the Firebase console: document ID = their lowercase Google email address (any field inside is fine, e.g. addedAt: now)."),
+        el("h3", {}, "Admin access"),
+        el("p", { class: "muted" }, "Admin accounts can switch between Studente/Maestro, edit any master's content library, set pack point bonuses, and set the rates above. To grant admin, add a document to the adminEmails collection in the Firebase console: document ID = the person's lowercase Google email."),
       ]),
     ]));
   });
