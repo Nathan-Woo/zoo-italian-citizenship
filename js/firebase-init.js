@@ -9,7 +9,7 @@ import {
   setPersistence,
   browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 const firebaseConfig = {
@@ -21,22 +21,23 @@ const firebaseConfig = {
   appId: "1:152159320100:web:8c9d47ba118b09fd4f00b1"
 };
 
+
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// This project's Firestore database isn't named "(default)" — it's
-// named "zooo". getFirestore() connects to "(default)" unless told
-// otherwise, so every request was silently hitting a database that
-// doesn't exist under that name, which the SDK reports as "client is
-// offline" rather than a clearer "not found." Passing the database ID
-// explicitly as the second argument fixes it.
-// (Check yours in Firebase Console → Firestore Database — the database
-// ID is shown near the top of that page. If you ever create a new
-// database and want to skip this step, choose "(default)" as its ID
-// when creating it.)
-const FIRESTORE_DATABASE_ID = "zooo";
-
-export const db = getFirestore(app, FIRESTORE_DATABASE_ID);
+// Firestore's default real-time transport is a streaming connection.
+// Some networks (corporate/school firewalls, antivirus with HTTPS
+// inspection, some routers) let plain short HTTPS requests through fine
+// but kill or mangle long-lived streaming ones — the SDK then reports
+// "client is offline" even though the network itself is fine.
+// experimentalForceLongPolling skips auto-detection (which can itself
+// get confused on hostile networks) and forces plain long-polling
+// outright. Slightly less efficient than streaming, but far more
+// reliable on networks like this.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  useFetchStreams: false,
+});
 
 export const storage = getStorage(app);
 
@@ -44,4 +45,4 @@ setPersistence(auth, browserLocalPersistence).catch((err) =>
   console.error("Auth persistence error:", err)
 );
 
-console.log("Firebase project:", firebaseConfig.projectId, "| Firestore database:", FIRESTORE_DATABASE_ID);
+console.log("Firebase project:", firebaseConfig.projectId);
